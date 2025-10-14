@@ -1,7 +1,7 @@
 use crate::{
     activation::Activation,
     cost::CostFunction,
-    layer::{ActivationLayer, ConvolutionalLayer, DenseLayer, Layer, LayerError},
+    layers::{ActivationLayer, ConvolutionalLayer, DenseLayer, Layer, LayerError},
     metrics::{Benchmark, History, MetricsType},
     optimizer::Optimizer,
 };
