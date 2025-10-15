@@ -1,4 +1,4 @@
-use crate::layer::Trainable;
+use crate::layers::Trainable;
 
 pub trait Optimizer: Sync + Send {
     fn get_learning_rate(&self) -> f64;
