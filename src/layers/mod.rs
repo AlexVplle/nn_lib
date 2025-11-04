@@ -2,7 +2,6 @@ use ndarray::{ArrayD, ShapeError};
 use std::any::Any;
 use thiserror::Error;
 
-// Re-export all layer types
 pub mod activation;
 pub mod convolutional;
 pub mod dense;
