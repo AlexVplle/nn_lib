@@ -6,6 +6,7 @@ use super::{ConfusionMatrix, MetricsType};
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct Metrics {
     pub metrics: HashMap<MetricsType, f64>,
+    total_samples: usize,
 }
 
 impl Metrics {
@@ -14,7 +15,10 @@ impl Metrics {
         for el in metrics {
             map.insert(*el, 0f64);
         }
-        Self { metrics: map }
+        Self {
+            metrics: map,
+            total_samples: 0,
+        }
     }
 
     pub fn get_all(&self) -> &HashMap<MetricsType, f64> {
@@ -33,18 +37,20 @@ impl Metrics {
     /// * `predictions` a batched probability distribution of shape (n, i)
     /// * `observed` a batched observed values of shape (n, i)
     pub fn accumulate(&mut self, predictions: &ArrayD<f64>, observed: &ArrayD<f64>) {
+        let n_samples: usize = predictions.len_of(Axis(0));
+        self.total_samples += n_samples;
+        let weight: f64 = n_samples as f64;
         let confusion_matrix: ConfusionMatrix = ConfusionMatrix::from(predictions, observed);
         for (metric_type, value) in self.metrics.iter_mut() {
             match metric_type {
                 MetricsType::Accuracy => {
                     let total_correct: usize = confusion_matrix.true_positives.iter().sum();
-                    let n_samples: usize = predictions.len_of(Axis(0));
                     let accuracy: f64 = if n_samples > 0 {
                         total_correct as f64 / n_samples as f64
                     } else {
                         0.0
                     };
-                    *value += accuracy;
+                    *value += accuracy * weight;
                 }
 
                 MetricsType::Specificity => {
@@ -56,7 +62,7 @@ impl Metrics {
                     } else {
                         0.0
                     };
-                    *value += specificity;
+                    *value += specificity * weight;
                 }
 
                 MetricsType::TypeIError => {
@@ -68,7 +74,7 @@ impl Metrics {
                     } else {
                         0.0
                     };
-                    *value += type_1_error;
+                    *value += type_1_error * weight;
                 }
 
                 MetricsType::TypeIIError => {
@@ -80,7 +86,7 @@ impl Metrics {
                     } else {
                         0.0
                     };
-                    *value += type_2_error;
+                    *value += type_2_error * weight;
                 }
 
                 MetricsType::MacroRecall => {
@@ -97,7 +103,7 @@ impl Metrics {
                         })
                         .sum::<f64>()
                         / confusion_matrix.number_of_class as f64;
-                    *value += recall;
+                    *value += recall * weight;
                 }
 
                 MetricsType::MacroPrecision => {
@@ -114,7 +120,7 @@ impl Metrics {
                         })
                         .sum::<f64>()
                         / confusion_matrix.number_of_class as f64;
-                    *value += precision;
+                    *value += precision * weight;
                 }
 
                 MetricsType::MacroF1Score => {
@@ -132,7 +138,7 @@ impl Metrics {
                         })
                         .sum::<f64>()
                         / confusion_matrix.number_of_class as f64;
-                    *value += f1_score;
+                    *value += f1_score * weight;
                 }
 
                 MetricsType::WeightedRecall => {
@@ -150,7 +156,7 @@ impl Metrics {
                             }
                         })
                         .sum::<f64>();
-                    *value += recall;
+                    *value += recall * weight;
                 }
 
                 MetricsType::WeightedPrecision => {
@@ -168,7 +174,7 @@ impl Metrics {
                             }
                         })
                         .sum::<f64>();
-                    *value += precision;
+                    *value += precision * weight;
                 }
 
                 MetricsType::WeightedF1Score => {
@@ -188,24 +194,24 @@ impl Metrics {
                             }
                         })
                         .sum::<f64>();
-                    *value += f1_score;
+                    *value += f1_score * weight;
                 }
             }
         }
     }
 
-    pub fn mean(&mut self, metric_type: MetricsType, number_of_batch: usize) {
-        if number_of_batch > 0 {
+    pub fn mean(&mut self, metric_type: MetricsType) {
+        if self.total_samples > 0 {
             if let Some(m) = self.metrics.get_mut(&metric_type) {
-                *m /= number_of_batch as f64;
+                *m /= self.total_samples as f64;
             }
         }
     }
 
-    pub fn mean_all(&mut self, number_of_batch: usize) {
-        if number_of_batch > 0 {
+    pub fn mean_all(&mut self) {
+        if self.total_samples > 0 {
             for (&_, value) in self.metrics.iter_mut() {
-                *value /= number_of_batch as f64;
+                *value /= self.total_samples as f64;
             }
         }
     }
@@ -271,6 +277,7 @@ mod tests {
         .into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         assert_eq!(metrics.get_metric(MetricsType::Accuracy), Some(1.0));
     }
@@ -294,6 +301,7 @@ mod tests {
         .into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         let accuracy: f64 = metrics.get_metric(MetricsType::Accuracy).unwrap();
         assert!((accuracy - 2.0 / 3.0).abs() < 1e-10);
@@ -309,6 +317,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         assert_eq!(metrics.get_metric(MetricsType::Accuracy), Some(0.0));
     }
@@ -322,25 +331,28 @@ mod tests {
         let observed1: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions1, &observed1);
-        assert_eq!(metrics.get_metric(MetricsType::Accuracy), Some(1.0));
 
         let predictions2: ArrayD<f64> = arr2(&[[0.9, 0.1], [0.9, 0.1]]).into_dyn();
 
         let observed2: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions2, &observed2);
+        metrics.mean_all();
 
-        assert_eq!(metrics.get_metric(MetricsType::Accuracy), Some(1.5));
+        assert_eq!(metrics.get_metric(MetricsType::Accuracy), Some(0.75));
     }
 
     #[test]
     fn test_metrics_mean_single_metric() {
         let mut metrics: Metrics = Metrics::from(&vec![MetricsType::Accuracy]);
-        metrics.metrics.insert(MetricsType::Accuracy, 3.0);
 
-        metrics.mean(MetricsType::Accuracy, 4);
+        let predictions: ArrayD<f64> = arr2(&[[0.9, 0.1], [0.1, 0.9], [0.9, 0.1], [0.1, 0.9]]).into_dyn();
+        let observed: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0], [1.0, 0.0], [0.0, 1.0]]).into_dyn();
 
-        assert_eq!(metrics.get_metric(MetricsType::Accuracy), Some(0.75));
+        metrics.accumulate(&predictions, &observed);
+        metrics.mean(MetricsType::Accuracy);
+
+        assert_eq!(metrics.get_metric(MetricsType::Accuracy), Some(1.0));
     }
 
     #[test]
@@ -348,7 +360,7 @@ mod tests {
         let mut metrics: Metrics = Metrics::from(&vec![MetricsType::Accuracy]);
         metrics.metrics.insert(MetricsType::Accuracy, 3.0);
 
-        metrics.mean(MetricsType::MacroRecall, 4);
+        metrics.mean(MetricsType::MacroRecall);
 
         assert_eq!(metrics.get_metric(MetricsType::Accuracy), Some(3.0));
     }
@@ -357,13 +369,15 @@ mod tests {
     fn test_metrics_mean_all() {
         let mut metrics: Metrics =
             Metrics::from(&vec![MetricsType::Accuracy, MetricsType::MacroPrecision]);
-        metrics.metrics.insert(MetricsType::Accuracy, 6.0);
-        metrics.metrics.insert(MetricsType::MacroPrecision, 8.0);
 
-        metrics.mean_all(2);
+        let predictions: ArrayD<f64> = arr2(&[[0.9, 0.1], [0.1, 0.9]]).into_dyn();
+        let observed: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
 
-        assert_eq!(metrics.get_metric(MetricsType::Accuracy), Some(3.0));
-        assert_eq!(metrics.get_metric(MetricsType::MacroPrecision), Some(4.0));
+        metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
+
+        assert_eq!(metrics.get_metric(MetricsType::Accuracy), Some(1.0));
+        assert_eq!(metrics.get_metric(MetricsType::MacroPrecision), Some(1.0));
     }
 
     #[test]
@@ -378,6 +392,7 @@ mod tests {
             arr2(&[[1.0, 0.0], [0.0, 1.0], [0.0, 1.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         let macro_recall: f64 = metrics.get_metric(MetricsType::MacroRecall).unwrap();
         let weighted_recall: f64 = metrics.get_metric(MetricsType::WeightedRecall).unwrap();
@@ -405,6 +420,7 @@ mod tests {
             arr2(&[[1.0, 0.0], [0.0, 1.0], [0.0, 1.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         let macro_recall: f64 = metrics.get_metric(MetricsType::MacroRecall).unwrap();
         let weighted_recall: f64 = metrics.get_metric(MetricsType::WeightedRecall).unwrap();
@@ -431,7 +447,7 @@ mod tests {
         metrics.metrics.insert(MetricsType::MacroRecall, 1.5);
         metrics.metrics.insert(MetricsType::MacroF1Score, 1.6);
 
-        metrics.mean_all(0);
+        metrics.mean_all();
 
         assert_eq!(metrics.get_metric(MetricsType::Accuracy), Some(2.5));
         assert_eq!(metrics.get_metric(MetricsType::MacroPrecision), Some(1.8));
@@ -444,7 +460,7 @@ mod tests {
         let mut metrics: Metrics = Metrics::from(&vec![MetricsType::Accuracy]);
         metrics.metrics.insert(MetricsType::Accuracy, 3.0);
 
-        metrics.mean(MetricsType::Accuracy, 0);
+        metrics.mean(MetricsType::Accuracy);
 
         assert_eq!(metrics.get_metric(MetricsType::Accuracy), Some(3.0));
     }
@@ -458,6 +474,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         assert_eq!(metrics.get_metric(MetricsType::MacroRecall), Some(1.0));
     }
@@ -471,6 +488,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[0.0, 1.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         let recall: f64 = metrics.get_metric(MetricsType::MacroRecall).unwrap();
         assert!((recall - 0.25).abs() < 1e-10);
@@ -485,6 +503,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[0.0, 1.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         assert_eq!(metrics.get_metric(MetricsType::MacroRecall), Some(0.0));
     }
@@ -498,6 +517,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         assert_eq!(metrics.get_metric(MetricsType::MacroPrecision), Some(1.0));
     }
@@ -511,6 +531,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         let precision: f64 = metrics.get_metric(MetricsType::MacroPrecision).unwrap();
         assert!((precision - 0.25).abs() < 1e-10);
@@ -525,6 +546,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[0.0, 1.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         assert_eq!(metrics.get_metric(MetricsType::MacroPrecision), Some(0.0));
     }
@@ -538,6 +560,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         assert_eq!(metrics.get_metric(MetricsType::Specificity), Some(1.0));
     }
@@ -551,6 +574,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         let specificity: f64 = metrics.get_metric(MetricsType::Specificity).unwrap();
         assert!((specificity - 0.5).abs() < 1e-10);
@@ -565,6 +589,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         assert_eq!(metrics.get_metric(MetricsType::TypeIError), Some(0.0));
     }
@@ -578,6 +603,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         let type_i_error: f64 = metrics.get_metric(MetricsType::TypeIError).unwrap();
         assert!((type_i_error - 0.5).abs() < 1e-10);
@@ -593,6 +619,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         let type_i_error: f64 = metrics.get_metric(MetricsType::TypeIError).unwrap();
         let specificity: f64 = metrics.get_metric(MetricsType::Specificity).unwrap();
@@ -609,6 +636,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         assert_eq!(metrics.get_metric(MetricsType::TypeIIError), Some(0.0));
     }
@@ -622,6 +650,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[0.0, 1.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         let type_ii_error: f64 = metrics.get_metric(MetricsType::TypeIIError).unwrap();
         assert!((type_ii_error - 0.5).abs() < 1e-10);
@@ -636,6 +665,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         assert_eq!(metrics.get_metric(MetricsType::MacroF1Score), Some(1.0));
     }
@@ -649,6 +679,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         // Macro-averaging:
         // Class 0: TP=1, FP=2, FN=0 -> F1=2*1/(2*1+2+0)=2/4=0.5
@@ -667,6 +698,7 @@ mod tests {
         let observed: ArrayD<f64> = arr2(&[[0.0, 1.0], [0.0, 1.0]]).into_dyn();
 
         metrics.accumulate(&predictions, &observed);
+        metrics.mean_all();
 
         assert_eq!(metrics.get_metric(MetricsType::MacroF1Score), Some(0.0));
     }
@@ -686,7 +718,7 @@ mod tests {
         let obs2: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
         benchmark1.metrics.accumulate(&preds2, &obs2);
 
-        benchmark1.metrics.mean(MetricsType::Accuracy, 2);
+        benchmark1.metrics.mean(MetricsType::Accuracy);
         history.history.push(benchmark1);
 
         let mut benchmark2: Benchmark = Benchmark::new(&vec![MetricsType::Accuracy]);
@@ -696,7 +728,7 @@ mod tests {
         let obs3: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
         benchmark2.metrics.accumulate(&preds3, &obs3);
 
-        benchmark2.metrics.mean(MetricsType::Accuracy, 1);
+        benchmark2.metrics.mean(MetricsType::Accuracy);
         history.history.push(benchmark2);
 
         let loss_series: Vec<f64> = history.get_loss_time_series();

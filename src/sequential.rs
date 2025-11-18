@@ -74,10 +74,12 @@ impl SequentialBuilder {
     ) -> Result<(), NeuralNetworkError> {
         self.layers
             .last()
-            .and_then(|layer| layer.as_any().downcast_ref::<ActivationLayer>())
+            .and_then(|layer: &Box<dyn Layer + 'static>| {
+                layer.as_any().downcast_ref::<ActivationLayer>()
+            })
             .map_or(
                 Err(NeuralNetworkError::MissingActivationLayer),
-                |activation_layer| match cost_function {
+                |activation_layer: &ActivationLayer| match cost_function {
                     CostFunction::Mse => Ok(()),
                     CostFunction::CrossEntropy
                         if activation_layer.activation == Activation::Softmax =>
@@ -123,7 +125,7 @@ impl Sequential {
     /// * `input` : batched input, of size (n, dim i) where **dim i** is the dimension of the
     /// network first layer and **n** is the number of point in the batch.
     pub fn predict(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
-        let mut output = input.clone();
+        let mut output: ArrayD<f64> = input.clone();
         for layer in &self.layers {
             output = layer.feed_forward(&output)?;
         }
@@ -143,18 +145,18 @@ impl Sequential {
         test_data: (&ArrayD<f64>, &ArrayD<f64>),
         batch_size: usize,
     ) -> Benchmark {
-        let mut bench = Benchmark::new(&self.metrics);
-        let (x, y) = test_data;
+        let mut bench: Benchmark = Benchmark::new(&self.metrics);
+        let (x, y): (&ArrayD<f64>, &ArrayD<f64>) = test_data;
         assert_eq!(x.shape()[0], y.shape()[0]);
-        let batches = Self::create_batches(x, y, batch_size);
+        let batches: Vec<(ArrayD<f64>, ArrayD<f64>)> = Self::create_batches(x, y, batch_size);
 
-        let mut total_loss = 0.0;
-        let mut batch_count = 0;
+        let mut total_loss: f64 = 0.0;
+        let mut batch_count: usize = 0;
 
         for (batched_x, batched_y) in batches.into_iter() {
-            let output = self.predict(&batched_x).unwrap();
+            let output: ArrayD<f64> = self.predict(&batched_x).unwrap();
 
-            let batch_loss = self.cost_function.cost(&output, &batched_y);
+            let batch_loss: f64 = self.cost_function.cost(&output, &batched_y);
 
             if !self.metrics.is_empty() {
                 bench.metrics.accumulate(&output, &batched_y);
@@ -164,7 +166,7 @@ impl Sequential {
             batch_count += 1;
         }
 
-        bench.metrics.mean_all(batch_count);
+        bench.metrics.mean_all();
         bench.loss = total_loss / batch_count as f64;
         bench
     }
@@ -226,7 +228,7 @@ impl Sequential {
             self.backpropagation(&output, batched_y)?;
         }
 
-        bench.metrics.mean_all(batches.len());
+        bench.metrics.mean_all();
         bench.loss = total_loss / batches.len() as f64;
 
         Ok(bench)
