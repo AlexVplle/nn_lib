@@ -79,6 +79,45 @@ impl ConfusionMatrix {
             false_negatives,
         }
     }
+
+    pub fn add(&mut self, other: &ConfusionMatrix) {
+        if self.number_of_class == 0 {
+            *self = other.clone();
+            return;
+        }
+
+        assert_eq!(
+            self.number_of_class, other.number_of_class,
+            "Cannot add confusion matrices with different number of classes"
+        );
+
+        for class_index in 0..self.number_of_class {
+            self.true_positives[class_index] += other.true_positives[class_index];
+            self.true_negatives[class_index] += other.true_negatives[class_index];
+            self.false_positives[class_index] += other.false_positives[class_index];
+            self.false_negatives[class_index] += other.false_negatives[class_index];
+
+            for predicted_class in 0..self.number_of_class {
+                self.matrix[class_index][predicted_class] +=
+                    other.matrix[class_index][predicted_class];
+            }
+        }
+
+        let total_samples: usize = self
+            .true_positives
+            .iter()
+            .zip(self.false_negatives.iter())
+            .map(|(true_positive, false_negative)| true_positive + false_negative)
+            .sum();
+
+        if total_samples > 0 {
+            for class_index in 0..self.number_of_class {
+                let class_samples: usize =
+                    self.true_positives[class_index] + self.false_negatives[class_index];
+                self.weight_classes[class_index] = class_samples as f64 / total_samples as f64;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

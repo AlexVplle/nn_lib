@@ -2,7 +2,7 @@ use crate::{
     activation::Activation,
     cost::CostFunction,
     layers::{ActivationLayer, ConvolutionalLayer, DenseLayer, Layer, LayerError},
-    metrics::{Benchmark, History, MetricsType},
+    metrics::{Benchmark, History, Metrics},
     optimizer::Optimizer,
 };
 use log::debug;
@@ -14,14 +14,14 @@ use thiserror::Error;
 #[derive(Default)]
 pub struct SequentialBuilder {
     layers: Vec<Box<dyn Layer>>,
-    metrics: Vec<MetricsType>,
+    metrics: Option<Metrics>,
 }
 
 impl SequentialBuilder {
     pub fn new() -> SequentialBuilder {
         Self {
             layers: vec![],
-            metrics: vec![],
+            metrics: None,
         }
     }
 
@@ -32,17 +32,8 @@ impl SequentialBuilder {
         self
     }
 
-    /// Add a metric to compute for the neural network,
-    /// added metrics will be available inside the history record and inside the bench object that
-    /// the method evaluate return
-    pub fn watch(mut self, metric_type: MetricsType) -> Self {
-        self.metrics.push(metric_type);
-        self
-    }
-
-    /// Add all the metric inside `metrics` into the neural network metrics watch list
-    pub fn watch_all(mut self, metrics: Vec<MetricsType>) -> Self {
-        self.metrics.extend(metrics.iter());
+    pub fn with_metrics(mut self, metrics: Metrics) -> Self {
+        self.metrics = Some(metrics);
         self
     }
 
@@ -113,7 +104,7 @@ pub struct Sequential {
     layers: Vec<Box<dyn Layer>>,
     cost_function: CostFunction,
     optimizer: Box<dyn Optimizer>,
-    metrics: Vec<MetricsType>,
+    metrics: Option<Metrics>,
 }
 
 impl Sequential {
@@ -145,7 +136,11 @@ impl Sequential {
         test_data: (&ArrayD<f64>, &ArrayD<f64>),
         batch_size: usize,
     ) -> Benchmark {
-        let mut bench: Benchmark = Benchmark::new(&self.metrics);
+        let metrics: Metrics = self
+            .metrics
+            .clone()
+            .expect("Metrics must be set before calling evaluate");
+        let mut bench: Benchmark = Benchmark::new(metrics);
         let (x, y): (&ArrayD<f64>, &ArrayD<f64>) = test_data;
         assert_eq!(x.shape()[0], y.shape()[0]);
         let batches: Vec<(ArrayD<f64>, ArrayD<f64>)> = Self::create_batches(x, y, batch_size);
@@ -158,15 +153,13 @@ impl Sequential {
 
             let batch_loss: f64 = self.cost_function.cost(&output, &batched_y);
 
-            if !self.metrics.is_empty() {
-                bench.metrics.accumulate(&output, &batched_y);
-            }
+            bench.metrics.accumulate(&output, &batched_y);
 
             total_loss += batch_loss;
             batch_count += 1;
         }
 
-        bench.metrics.mean_all();
+        bench.metrics.finalize();
         bench.loss = total_loss / batch_count as f64;
         bench
     }
@@ -214,21 +207,24 @@ impl Sequential {
         &mut self,
         batches: &[(ArrayD<f64>, ArrayD<f64>)],
     ) -> Result<Benchmark, LayerError> {
-        let mut bench = Benchmark::new(&self.metrics);
-        let mut total_loss = 0.0;
+        let metrics: Metrics = self
+            .metrics
+            .clone()
+            .expect("Metrics must be set before calling train");
+        let mut bench: Benchmark = Benchmark::new(metrics);
+        let mut total_loss: f64 = 0.0;
 
         for (batched_x, batched_y) in batches.iter() {
-            let output = self.feed_forward(batched_x)?;
-            let batch_loss = self.cost_function.cost(&output, batched_y);
+            let output: ArrayD<f64> = self.feed_forward(batched_x)?;
+            let batch_loss: f64 = self.cost_function.cost(&output, batched_y);
 
-            // the cost function is already meant over the data point of the batch
             total_loss += batch_loss;
 
             bench.metrics.accumulate(&output, batched_y);
             self.backpropagation(&output, batched_y)?;
         }
 
-        bench.metrics.mean_all();
+        bench.metrics.finalize();
         bench.loss = total_loss / batches.len() as f64;
 
         Ok(bench)
