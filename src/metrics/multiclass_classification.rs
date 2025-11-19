@@ -211,3 +211,132 @@ impl MulticlassClassifierMetrics {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::arr2;
+
+    #[test]
+    fn test_from() {
+        let metric_types: Vec<MulticlassMetricType> = vec![
+            MulticlassMetricType::Accuracy,
+            MulticlassMetricType::MacroPrecision,
+        ];
+        let metrics: MulticlassClassifierMetrics = MulticlassClassifierMetrics::from(&metric_types);
+
+        assert_eq!(metrics.metrics.len(), 2);
+        assert_eq!(metrics.get_metric(MulticlassMetricType::Accuracy), Some(0.0));
+        assert_eq!(
+            metrics.get_metric(MulticlassMetricType::MacroPrecision),
+            Some(0.0)
+        );
+        assert_eq!(metrics.total_samples, 0);
+    }
+
+    #[test]
+    fn test_get_metric_nonexistent() {
+        let metric_types: Vec<MulticlassMetricType> = vec![MulticlassMetricType::Accuracy];
+        let metrics: MulticlassClassifierMetrics = MulticlassClassifierMetrics::from(&metric_types);
+
+        assert_eq!(
+            metrics.get_metric(MulticlassMetricType::MacroPrecision),
+            None
+        );
+    }
+
+    #[test]
+    fn test_accumulate_and_finalize_perfect_predictions() {
+        let metric_types: Vec<MulticlassMetricType> = vec![
+            MulticlassMetricType::Accuracy,
+            MulticlassMetricType::MacroPrecision,
+            MulticlassMetricType::MacroRecall,
+        ];
+        let mut metrics: MulticlassClassifierMetrics =
+            MulticlassClassifierMetrics::from(&metric_types);
+
+        let predictions: ArrayD<f64> = arr2(&[
+            [0.9, 0.05, 0.05],
+            [0.1, 0.8, 0.1],
+            [0.05, 0.1, 0.85],
+        ])
+        .into_dyn();
+
+        let observed: ArrayD<f64> = arr2(&[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+            .into_dyn();
+
+        metrics.accumulate(&predictions, &observed);
+        metrics.finalize();
+
+        assert_eq!(
+            metrics.get_metric(MulticlassMetricType::Accuracy),
+            Some(1.0)
+        );
+        assert_eq!(
+            metrics.get_metric(MulticlassMetricType::MacroPrecision),
+            Some(1.0)
+        );
+        assert_eq!(
+            metrics.get_metric(MulticlassMetricType::MacroRecall),
+            Some(1.0)
+        );
+        assert_eq!(metrics.total_samples, 3);
+    }
+
+    #[test]
+    fn test_accumulate_multiple_batches() {
+        let metric_types: Vec<MulticlassMetricType> = vec![MulticlassMetricType::Accuracy];
+        let mut metrics: MulticlassClassifierMetrics =
+            MulticlassClassifierMetrics::from(&metric_types);
+
+        let batch1: ArrayD<f64> = arr2(&[[0.9, 0.1], [0.2, 0.8]]).into_dyn();
+        let observed1: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
+
+        let batch2: ArrayD<f64> = arr2(&[[0.8, 0.2], [0.3, 0.7]]).into_dyn();
+        let observed2: ArrayD<f64> = arr2(&[[1.0, 0.0], [0.0, 1.0]]).into_dyn();
+
+        metrics.accumulate(&batch1, &observed1);
+        metrics.accumulate(&batch2, &observed2);
+        metrics.finalize();
+
+        assert_eq!(metrics.total_samples, 4);
+        assert_eq!(
+            metrics.get_metric(MulticlassMetricType::Accuracy),
+            Some(1.0)
+        );
+    }
+
+    #[test]
+    fn test_finalize_with_imperfect_predictions() {
+        let metric_types: Vec<MulticlassMetricType> = vec![
+            MulticlassMetricType::Accuracy,
+            MulticlassMetricType::Specificity,
+        ];
+        let mut metrics: MulticlassClassifierMetrics =
+            MulticlassClassifierMetrics::from(&metric_types);
+
+        let predictions: ArrayD<f64> = arr2(&[
+            [0.9, 0.05, 0.05],
+            [0.8, 0.1, 0.1],
+            [0.1, 0.8, 0.1],
+            [0.1, 0.1, 0.8],
+        ])
+        .into_dyn();
+
+        let observed: ArrayD<f64> = arr2(&[
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ])
+        .into_dyn();
+
+        metrics.accumulate(&predictions, &observed);
+        metrics.finalize();
+
+        assert_eq!(
+            metrics.get_metric(MulticlassMetricType::Accuracy),
+            Some(0.75)
+        );
+    }
+}

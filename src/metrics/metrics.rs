@@ -14,9 +14,7 @@ impl Metrics {
 
     pub fn accumulate(&mut self, predictions: &ArrayD<f64>, observed: &ArrayD<f64>) {
         match self {
-            Metrics::MulticlassClassification(metrics) => {
-                metrics.accumulate(predictions, observed)
-            }
+            Metrics::MulticlassClassification(metrics) => metrics.accumulate(predictions, observed),
         }
     }
 
