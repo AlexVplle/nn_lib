@@ -1,4 +1,4 @@
-use ndarray::{ArrayD, Axis};
+use candle_core::Tensor;
 
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Debug, Default)]
 pub enum CostFunction {
@@ -27,29 +27,34 @@ impl CostFunction {
     /// # Arguments
     /// * `output` - a batch matrices (shape (n, j)) of output of the network
     /// * `observed` - a one hotted encoded vector of observed values
-    pub fn cost(&self, output: &ArrayD<f64>, observed: &ArrayD<f64>) -> f64 {
+    pub fn cost(&self, output: &Tensor, observed: &Tensor) -> f64 {
         let epsilon = 1e-7;
-        let clipped_output = output.mapv(|x| x.clamp(epsilon, 1.0 - epsilon));
+        let clipped_output = output.clamp(epsilon, 1.0 - epsilon).expect("Failed to clamp output");
+
         match self {
             Self::CrossEntropy => {
-                observed
-                    .axis_iter(Axis(0))
-                    .enumerate()
-                    .map(|(i, observed_row)| {
-                        let correct_class = observed_row.iter().position(|&x| x == 1.0).unwrap();
-                        -f64::ln(clipped_output[[i, correct_class]])
-                    })
-                    .sum::<f64>()
-                    / output.shape()[0] as f64
+                let log_output = clipped_output.log().expect("Failed to compute log");
+                let losses = (observed * log_output).expect("Failed to multiply");
+                let sum_losses = losses.sum_all().expect("Failed to sum").to_scalar::<f64>().expect("Failed to convert to scalar");
+                let batch_size = output.dims()[0] as f64;
+                -sum_losses / batch_size
             }
             Self::BinaryCrossEntropy => {
-                let losses = observed * &clipped_output.mapv(f64::ln)
-                    + &(1.0 - observed) * &((1.0 - clipped_output).mapv(f64::ln));
-                -losses.mean().unwrap()
+                let log_output = clipped_output.log().expect("Failed to compute log");
+                let one_minus_output = (1.0 - &clipped_output).expect("Failed to compute 1-output");
+                let log_one_minus = one_minus_output.log().expect("Failed to compute log");
+                let one_minus_obs = (1.0 - observed).expect("Failed to compute 1-observed");
+
+                let term1 = (observed * log_output).expect("Failed to multiply");
+                let term2 = (one_minus_obs * log_one_minus).expect("Failed to multiply");
+                let losses = (term1 + term2).expect("Failed to add");
+                let mean_loss = losses.mean_all().expect("Failed to compute mean").to_scalar::<f64>().expect("Failed to convert to scalar");
+                -mean_loss
             }
             Self::Mse => {
-                let diff = output - observed;
-                diff.mapv(|x| x.powi(2)).mean().unwrap()
+                let diff = (output - observed).expect("Failed to compute diff");
+                let squared = diff.sqr().expect("Failed to square");
+                squared.mean_all().expect("Failed to compute mean").to_scalar::<f64>().expect("Failed to convert to scalar")
             }
         }
     }
@@ -67,15 +72,16 @@ impl CostFunction {
     /// observed vector if the is multi-class.
     pub fn cost_output_gradient(
         &self,
-        output: &ArrayD<f64>,
-        observed: &ArrayD<f64>,
-    ) -> ArrayD<f64> {
+        output: &Tensor,
+        observed: &Tensor,
+    ) -> Tensor {
         match self {
-            Self::CrossEntropy => output - observed,
-            Self::BinaryCrossEntropy => output - observed,
+            Self::CrossEntropy => (output - observed).expect("Failed to compute gradient"),
+            Self::BinaryCrossEntropy => (output - observed).expect("Failed to compute gradient"),
             Self::Mse => {
-                let batch_size = output.shape()[0];
-                2f64 * (output - observed) / batch_size as f64
+                let batch_size = output.dims()[0] as f64;
+                let diff = (output - observed).expect("Failed to compute diff");
+                ((diff * 2.0).expect("Failed to multiply") / batch_size).expect("Failed to divide")
             }
         }
     }

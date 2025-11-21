@@ -1,4 +1,4 @@
-use ndarray::ArrayD;
+use candle_core::Tensor;
 
 use super::{MulticlassClassifierMetrics, MulticlassMetricType};
 
@@ -12,7 +12,7 @@ impl Metrics {
         Metrics::MulticlassClassification(MulticlassClassifierMetrics::from(metric_types))
     }
 
-    pub fn accumulate(&mut self, predictions: &ArrayD<f64>, observed: &ArrayD<f64>) {
+    pub fn accumulate(&mut self, predictions: &Tensor, observed: &Tensor) {
         match self {
             Metrics::MulticlassClassification(metrics) => metrics.accumulate(predictions, observed),
         }

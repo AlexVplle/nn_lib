@@ -1,13 +1,13 @@
-use ndarray::{ArrayD, Dimension, IxDyn, ShapeError};
+use candle_core::Tensor;
 use std::any::Any;
 
 use super::{Layer, LayerError};
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone)]
 pub struct ReshapeLayer {
-    input: Option<ArrayD<f64>>,
-    input_shape: IxDyn,
-    output_shape: IxDyn,
+    input: Option<Tensor>,
+    input_shape: Vec<usize>,
+    output_shape: Vec<usize>,
 }
 
 impl ReshapeLayer {
@@ -15,52 +15,51 @@ impl ReshapeLayer {
         let input_elements: usize = input_shape.iter().product();
         let output_elements: usize = output_shape.iter().product();
         if input_elements != output_elements {
-            return Err(LayerError::ReshapeError(ShapeError::from_kind(
-                ndarray::ErrorKind::IncompatibleShape,
-            )));
+            return Err(LayerError::DimensionMismatch);
         }
         Ok(Self {
             input: None,
-            input_shape: IxDyn(input_shape),
-            output_shape: IxDyn(output_shape),
+            input_shape: input_shape.to_vec(),
+            output_shape: output_shape.to_vec(),
         })
     }
 }
 
 impl Layer for ReshapeLayer {
-    fn feed_forward_save(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
+    fn feed_forward_save(&mut self, input: &Tensor) -> Result<Tensor, LayerError> {
         self.input = Some(input.clone());
         self.feed_forward(input)
     }
 
-    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
-        let batch_size: usize = input.shape()[0];
-        let mut shape: Vec<usize> = Vec::with_capacity(self.output_shape.ndim() + 1);
+    fn feed_forward(&self, input: &Tensor) -> Result<Tensor, LayerError> {
+        let batch_size = input.dims()[0];
+        let mut shape: Vec<usize> = Vec::with_capacity(self.output_shape.len() + 1);
         shape.push(batch_size);
-        shape.extend_from_slice(self.output_shape.as_array_view().as_slice().unwrap());
+        shape.extend_from_slice(&self.output_shape);
 
-        if input.shape().iter().product::<usize>() != shape.iter().product() {
-            return Err(LayerError::ReshapeError(ShapeError::from_kind(
-                ndarray::ErrorKind::IncompatibleShape,
-            )));
+        let input_elements: usize = input.dims().iter().product();
+        let target_elements: usize = shape.iter().product();
+        if input_elements != target_elements {
+            return Err(LayerError::DimensionMismatch);
         }
-        Ok(input.clone().into_shape(shape).unwrap())
+        Ok(input.reshape(shape.as_slice())?)
     }
 
     fn propagate_backward(
         &mut self,
-        output_gradient: &ArrayD<f64>,
-    ) -> Result<ArrayD<f64>, LayerError> {
-        let batch_size: usize = output_gradient.shape()[0];
-        let mut shape: Vec<usize> = Vec::with_capacity(self.output_shape.ndim() + 1);
+        output_gradient: &Tensor,
+    ) -> Result<Tensor, LayerError> {
+        let batch_size = output_gradient.dims()[0];
+        let mut shape: Vec<usize> = Vec::with_capacity(self.input_shape.len() + 1);
         shape.push(batch_size);
-        shape.extend_from_slice(self.input_shape.as_array_view().as_slice().unwrap());
-        if output_gradient.shape().iter().product::<usize>() != shape.iter().product() {
-            return Err(LayerError::ReshapeError(ShapeError::from_kind(
-                ndarray::ErrorKind::IncompatibleShape,
-            )));
+        shape.extend_from_slice(&self.input_shape);
+
+        let grad_elements: usize = output_gradient.dims().iter().product();
+        let target_elements: usize = shape.iter().product();
+        if grad_elements != target_elements {
+            return Err(LayerError::DimensionMismatch);
         }
-        Ok(output_gradient.clone().into_shape(shape).unwrap())
+        Ok(output_gradient.reshape(shape.as_slice())?)
     }
 
     fn as_any(&self) -> &dyn Any {

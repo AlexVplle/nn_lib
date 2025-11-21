@@ -6,9 +6,9 @@ use crate::{
     optimizer::Optimizer,
 };
 use log::debug;
-use ndarray::{ArrayD, Axis};
-use ndarray_rand::rand::seq::SliceRandom;
-use ndarray_rand::rand::thread_rng;
+use candle_core::Tensor;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 use thiserror::Error;
 
 #[derive(Default)]
@@ -115,8 +115,8 @@ impl Sequential {
     /// # Arguments
     /// * `input` : batched input, of size (n, dim i) where **dim i** is the dimension of the
     /// network first layer and **n** is the number of point in the batch.
-    pub fn predict(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
-        let mut output: ArrayD<f64> = input.clone();
+    pub fn predict(&self, input: &Tensor) -> Result<Tensor, LayerError> {
+        let mut output = input.clone();
         for layer in &self.layers {
             output = layer.feed_forward(&output)?;
         }
@@ -133,7 +133,7 @@ impl Sequential {
     /// * `batch_size` the batch size, ie: number of data point treated simultaneously
     pub fn evaluate(
         &self,
-        test_data: (&ArrayD<f64>, &ArrayD<f64>),
+        test_data: (&Tensor, &Tensor),
         batch_size: usize,
     ) -> Benchmark {
         let metrics: Metrics = self
@@ -141,17 +141,17 @@ impl Sequential {
             .clone()
             .expect("Metrics must be set before calling evaluate");
         let mut bench: Benchmark = Benchmark::new(metrics);
-        let (x, y): (&ArrayD<f64>, &ArrayD<f64>) = test_data;
-        assert_eq!(x.shape()[0], y.shape()[0]);
-        let batches: Vec<(ArrayD<f64>, ArrayD<f64>)> = Self::create_batches(x, y, batch_size);
+        let (x, y) = test_data;
+        assert_eq!(x.dims()[0], y.dims()[0]);
+        let batches = Self::create_batches(x, y, batch_size);
 
-        let mut total_loss: f64 = 0.0;
-        let mut batch_count: usize = 0;
+        let mut total_loss = 0.0;
+        let mut batch_count = 0;
 
         for (batched_x, batched_y) in batches.into_iter() {
-            let output: ArrayD<f64> = self.predict(&batched_x).unwrap();
+            let output = self.predict(&batched_x).unwrap();
 
-            let batch_loss: f64 = self.cost_function.cost(&output, &batched_y);
+            let batch_loss = self.cost_function.cost(&output, &batched_y);
 
             bench.metrics.accumulate(&output, &batched_y);
 
@@ -169,14 +169,14 @@ impl Sequential {
     /// * `train_data`
     pub fn train(
         &mut self,
-        train_data: (&ArrayD<f64>, &ArrayD<f64>),
-        validation_data: Option<(&ArrayD<f64>, &ArrayD<f64>)>,
+        train_data: (&Tensor, &Tensor),
+        validation_data: Option<(&Tensor, &Tensor)>,
         epochs: usize,
         batch_size: usize,
     ) -> Result<(History, Option<History>), LayerError> {
         let (x_train, y_train) = train_data;
 
-        if x_train.shape()[0] != y_train.shape()[0] {
+        if x_train.dims()[0] != y_train.dims()[0] {
             return Err(LayerError::DimensionMismatch);
         }
 
@@ -205,18 +205,18 @@ impl Sequential {
 
     fn process_epoch(
         &mut self,
-        batches: &[(ArrayD<f64>, ArrayD<f64>)],
+        batches: &[(Tensor, Tensor)],
     ) -> Result<Benchmark, LayerError> {
-        let metrics: Metrics = self
+        let metrics = self
             .metrics
             .clone()
             .expect("Metrics must be set before calling train");
-        let mut bench: Benchmark = Benchmark::new(metrics);
-        let mut total_loss: f64 = 0.0;
+        let mut bench = Benchmark::new(metrics);
+        let mut total_loss = 0.0;
 
         for (batched_x, batched_y) in batches.iter() {
-            let output: ArrayD<f64> = self.feed_forward(batched_x)?;
-            let batch_loss: f64 = self.cost_function.cost(&output, batched_y);
+            let output = self.feed_forward(batched_x)?;
+            let batch_loss = self.cost_function.cost(&output, batched_y);
 
             total_loss += batch_loss;
 
@@ -231,25 +231,28 @@ impl Sequential {
     }
 
     fn create_batches(
-        x_train: &ArrayD<f64>,
-        y_train: &ArrayD<f64>,
+        x_train: &Tensor,
+        y_train: &Tensor,
         batch_size: usize,
-    ) -> Vec<(ArrayD<f64>, ArrayD<f64>)> {
-        let mut indices = (0..x_train.shape()[0]).collect::<Vec<_>>();
+    ) -> Vec<(Tensor, Tensor)> {
+        let num_samples = x_train.dims()[0];
+        let mut indices: Vec<usize> = (0..num_samples).collect();
         let mut rng = thread_rng();
         indices.shuffle(&mut rng);
+
         indices
             .chunks(batch_size)
             .map(|batch_indices| {
-                (
-                    x_train.select(Axis(0), batch_indices),
-                    y_train.select(Axis(0), batch_indices),
-                )
+                let indices_u32: Vec<u32> = batch_indices.iter().map(|&i| i as u32).collect();
+                let index_tensor = Tensor::from_slice(&indices_u32, batch_indices.len(), &candle_core::Device::Cpu).expect("Failed to create index tensor");
+                let x_batch = x_train.index_select(&index_tensor, 0).expect("Failed to select batch");
+                let y_batch = y_train.index_select(&index_tensor, 0).expect("Failed to select batch");
+                (x_batch, y_batch)
             })
-            .collect::<Vec<_>>()
+            .collect()
     }
 
-    pub fn feed_forward(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
+    pub fn feed_forward(&mut self, input: &Tensor) -> Result<Tensor, LayerError> {
         let mut output = input.clone();
         for layer in &mut self.layers {
             output = layer.feed_forward_save(&output)?;
@@ -259,8 +262,8 @@ impl Sequential {
 
     fn backpropagation(
         &mut self,
-        net_output: &ArrayD<f64>,
-        observed: &ArrayD<f64>,
+        net_output: &Tensor,
+        observed: &Tensor,
     ) -> Result<(), LayerError> {
         let mut grad = self
             .cost_function

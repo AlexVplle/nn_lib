@@ -1,4 +1,4 @@
-use ndarray::{ArrayD, Axis};
+use candle_core::Tensor;
 use std::collections::HashMap;
 
 use super::ConfusionMatrix;
@@ -41,11 +41,11 @@ impl MulticlassClassifierMetrics {
         self.metrics.get(&metric_type).copied()
     }
 
-    pub fn accumulate(&mut self, predictions: &ArrayD<f64>, observed: &ArrayD<f64>) {
-        let batch_size: usize = predictions.len_of(Axis(0));
+    pub fn accumulate(&mut self, predictions: &Tensor, observed: &Tensor) {
+        let batch_size = predictions.dims()[0];
         self.total_samples += batch_size;
 
-        let confusion_matrix: ConfusionMatrix = ConfusionMatrix::from(predictions, observed);
+        let confusion_matrix = ConfusionMatrix::from(predictions, observed);
         self.accumulated_confusion_matrix.add(&confusion_matrix);
     }
 

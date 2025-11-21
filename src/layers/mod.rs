@@ -1,4 +1,4 @@
-use ndarray::{ArrayD, ShapeError};
+use candle_core::Tensor;
 use std::any::Any;
 use thiserror::Error;
 
@@ -24,14 +24,14 @@ pub use reshape::ReshapeLayer;
 /// The convention chosen in the layer implementations is (n, features) where n is the number of
 /// sample in the batch
 pub trait Layer {
-    fn feed_forward_save(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError>;
+    fn feed_forward_save(&mut self, input: &Tensor) -> Result<Tensor, LayerError>;
 
-    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError>;
+    fn feed_forward(&self, input: &Tensor) -> Result<Tensor, LayerError>;
 
     fn propagate_backward(
         &mut self,
-        output_gradient: &ArrayD<f64>,
-    ) -> Result<ArrayD<f64>, LayerError>;
+        output_gradient: &Tensor,
+    ) -> Result<Tensor, LayerError>;
 
     fn as_any(&self) -> &dyn Any;
 
@@ -39,11 +39,11 @@ pub trait Layer {
 }
 
 pub trait Trainable {
-    fn get_parameters(&self) -> Vec<ArrayD<f64>>;
+    fn get_parameters(&self) -> Vec<Tensor>;
 
-    fn get_parameters_mut(&mut self) -> Vec<&mut ArrayD<f64>>;
+    fn get_parameters_mut(&mut self) -> Vec<&mut Tensor>;
 
-    fn get_gradients(&self) -> Vec<ArrayD<f64>>;
+    fn get_gradients(&self) -> Vec<Tensor>;
 }
 
 #[derive(Error, Debug)]
@@ -51,8 +51,8 @@ pub enum LayerError {
     #[error("Access to stored input of the layer before stored happened")]
     IllegalInputAccess,
 
-    #[error("Error reshaping array: {0}")]
-    ReshapeError(#[from] ShapeError),
+    #[error("Candle error: {0}")]
+    CandleError(#[from] candle_core::Error),
 
     #[error("Dimension don't match")]
     DimensionMismatch,

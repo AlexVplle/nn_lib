@@ -23,11 +23,12 @@ impl Optimizer for GradientDescent {
 
     fn step(&mut self, layer: &mut dyn Trainable) {
         let gradients = layer.get_gradients();
-
         let mut parameters = layer.get_parameters_mut();
 
         for (param, grad) in parameters.iter_mut().zip(gradients.iter()) {
-            param.scaled_add(-self.learning_rate, grad);
+            let update = (grad * self.learning_rate).expect("Failed to scale gradient");
+            let new_param = (&**param - update).expect("Failed to update parameter");
+            **param = new_param;
         }
     }
 }

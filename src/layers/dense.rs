@@ -1,18 +1,18 @@
-use ndarray::ArrayD;
+use candle_core::Tensor;
 use std::any::Any;
 
 use crate::initialization::InitializerType;
 
 use super::{Layer, LayerError, Trainable};
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone)]
 pub struct DenseLayer {
-    weights: ArrayD<f64>,
-    bias: ArrayD<f64>,
-    last_batch_input: Option<ArrayD<f64>>,
+    weights: Tensor,
+    bias: Tensor,
+    last_batch_input: Option<Tensor>,
     // store those for optimizer access (from the trait Trainable)
-    weights_gradient: Option<ArrayD<f64>>,
-    biases_gradient: Option<ArrayD<f64>>,
+    weights_gradient: Option<Tensor>,
+    biases_gradient: Option<Tensor>,
     input_size: usize,
     output_size: usize,
 }
@@ -42,8 +42,7 @@ impl Layer for DenseLayer {
     ///
     /// # Arguments
     /// * `input` - shape (n, i)
-    fn feed_forward_save(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
-        // TODO find a without clone method, like in place mutation
+    fn feed_forward_save(&mut self, input: &Tensor) -> Result<Tensor, LayerError> {
         self.last_batch_input = Some(input.clone());
         self.feed_forward(input)
     }
@@ -54,15 +53,15 @@ impl Layer for DenseLayer {
     ///
     /// # Arguments
     /// * `input` - shape (n, i)
-    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
-        let batch_size = input.shape()[0];
-        let input_2d = input.view().into_shape((batch_size, self.input_size))?;
-        let weight_2d = self
-            .weights
-            .view()
-            .into_shape((self.input_size, self.output_size))?;
+    fn feed_forward(&self, input: &Tensor) -> Result<Tensor, LayerError> {
+        let batch_size = input.dims()[0];
+        let input_2d = input.reshape(&[batch_size, self.input_size])?;
+        let weight_2d = self.weights.reshape(&[self.input_size, self.output_size])?;
 
-        Ok((input_2d.dot(&weight_2d) + &self.bias).into_dyn())
+        let output = input_2d.matmul(&weight_2d)?;
+        let output_with_bias = output.broadcast_add(&self.bias)?;
+
+        Ok(output_with_bias)
     }
 
     /// Return the input gradient vector (shape (n, i)), by processing the output gradient vector
@@ -75,30 +74,26 @@ impl Layer for DenseLayer {
     /// * `output_gradient` - (shape (n, j))
     fn propagate_backward(
         &mut self,
-        output_gradient: &ArrayD<f64>,
-    ) -> Result<ArrayD<f64>, LayerError> {
+        output_gradient: &Tensor,
+    ) -> Result<Tensor, LayerError> {
         let input_gradient = match self.last_batch_input.as_ref() {
             Some(input) => {
-                let batch_size = output_gradient.shape()[0];
-                let output_grad_2d = output_gradient
-                    .view()
-                    .into_shape((batch_size, self.output_size))?;
+                let batch_size = output_gradient.dims()[0];
+                let output_grad_2d = output_gradient.reshape(&[batch_size, self.output_size])?;
 
-                let input_2d = input.view().into_shape((batch_size, self.input_size))?;
+                let input_2d = input.reshape(&[batch_size, self.input_size])?;
 
-                let weight_2d = self
-                    .weights
-                    .view()
-                    .into_shape((self.input_size, self.output_size))?;
+                let weight_2d = self.weights.reshape(&[self.input_size, self.output_size])?;
 
                 // mean relative to the batch
-                let weights_gradient = input_2d.t().dot(&output_grad_2d) / batch_size as f64;
-                let biases_gradient = output_grad_2d.sum_axis(ndarray::Axis(0)) / batch_size as f64;
+                let weights_gradient = (input_2d.t()?.matmul(&output_grad_2d)? / (batch_size as f64))?;
+                let biases_gradient = (output_grad_2d.sum(0)? / (batch_size as f64))?;
 
-                self.weights_gradient = Some(weights_gradient.to_owned().into_dyn());
-                self.biases_gradient = Some(biases_gradient.into_dyn());
+                self.weights_gradient = Some(weights_gradient);
+                self.biases_gradient = Some(biases_gradient);
 
-                Ok((output_grad_2d.dot(&weight_2d.t())).into_dyn())
+                let weight_2d_t = weight_2d.t()?;
+                Ok(output_grad_2d.matmul(&weight_2d_t)?)
             }
             None => Err(LayerError::IllegalInputAccess),
         };
@@ -115,29 +110,27 @@ impl Layer for DenseLayer {
 }
 
 impl Trainable for DenseLayer {
-    fn get_parameters(&self) -> Vec<ArrayD<f64>> {
+    fn get_parameters(&self) -> Vec<Tensor> {
         vec![
-            self.weights.clone().into_dyn(),
-            self.bias.clone().into_dyn(),
+            self.weights.clone(),
+            self.bias.clone(),
         ]
     }
 
-    fn get_parameters_mut(&mut self) -> Vec<&mut ArrayD<f64>> {
+    fn get_parameters_mut(&mut self) -> Vec<&mut Tensor> {
         vec![&mut self.weights, &mut self.bias]
     }
 
-    fn get_gradients(&self) -> Vec<ArrayD<f64>> {
+    fn get_gradients(&self) -> Vec<Tensor> {
         vec![
             self.weights_gradient
                 .as_ref()
                 .expect("Illegal access to unset weights gradient")
-                .clone()
-                .into_dyn(),
+                .clone(),
             self.biases_gradient
                 .as_ref()
                 .expect("Illegal access to unset biases gradient")
-                .clone()
-                .into_dyn(),
+                .clone(),
         ]
     }
 }
