@@ -244,7 +244,7 @@ impl Sequential {
             .chunks(batch_size)
             .map(|batch_indices| {
                 let indices_u32: Vec<u32> = batch_indices.iter().map(|&i| i as u32).collect();
-                let index_tensor = Tensor::from_slice(&indices_u32, batch_indices.len(), &candle_core::Device::Cpu).expect("Failed to create index tensor");
+                let index_tensor = Tensor::from_slice(&indices_u32, batch_indices.len(), x_train.device()).expect("Failed to create index tensor");
                 let x_batch = x_train.index_select(&index_tensor, 0).expect("Failed to select batch");
                 let y_batch = y_train.index_select(&index_tensor, 0).expect("Failed to select batch");
                 (x_batch, y_batch)
