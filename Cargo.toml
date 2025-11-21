@@ -16,4 +16,4 @@ num-traits = "0.2.19"
 thiserror = "1.0.60"
 rayon = "1.8"
 rand = "0.8.5"
-candle-core = "0.8.0"
+candle-core = { version = "0.9.1", features = ["cuda"] }
