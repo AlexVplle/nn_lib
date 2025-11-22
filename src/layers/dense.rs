@@ -20,10 +20,10 @@ pub struct DenseLayer {
 impl DenseLayer {
     /// Create a new `DenseLayer` filling it with random value. see `InitializerType` for
     /// initialization parameters
-    pub fn new(input_size: usize, output_size: usize, init: InitializerType) -> Self {
+    pub fn new(input_size: usize, output_size: usize, init: InitializerType, device: &candle_core::Device) -> Self {
         Self {
-            weights: init.initialize(input_size, output_size, &[input_size, output_size]),
-            bias: init.initialize(input_size, output_size, &[output_size]),
+            weights: init.initialize(input_size, output_size, &[input_size, output_size], device),
+            bias: init.initialize(input_size, output_size, &[output_size], device),
             last_batch_input: None,
             weights_gradient: None,
             biases_gradient: None,

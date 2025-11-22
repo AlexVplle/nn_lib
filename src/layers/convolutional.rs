@@ -25,6 +25,7 @@ impl ConvolutionalLayer {
         kernel_size: (usize, usize),
         number_of_kernel: usize,
         init: InitializerType,
+        device: &candle_core::Device,
     ) -> Self {
         let (kernel_height, kernel_width) = kernel_size;
         let (input_height, input_width, input_channel) = input_size;
@@ -41,11 +42,13 @@ impl ConvolutionalLayer {
                 input_height * input_width * input_channel,
                 output_height * output_width * output_channel,
                 &[kernel_height, kernel_width, input_channel, number_of_kernel],
+                device,
             ),
             bias: init.initialize(
                 input_height * input_width * input_channel,
                 output_height * output_width * output_channel,
                 &[number_of_kernel],
+                device,
             ),
             input: None,
             kernel_gradient: None,
