@@ -5,3 +5,4 @@ pub mod layers;
 pub mod metrics;
 pub mod sequential;
 pub mod optimizer;
+pub mod tensor;
