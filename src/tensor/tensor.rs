@@ -1,14 +1,11 @@
+use std::sync::Arc;
+
+use crate::tensor::{storage::Storage, Layout};
+
 #[derive(Eq, PartialEq, Debug, Clone, Default, PartialOrd, Ord, Hash)]
 pub struct Tensor<T, D> {
-    data: Vec<T>,
-    shape: Vec<usize>,
-    strides: Vec<usize>,
+    storage: Arc<Storage>,
+    layout: Layout,
     device: D,
     gradient: Vec<T>,
-}
-
-impl Tensor<T, D> {
-    fn new(arg: Type) -> Self {
-        Self {}
-    }
 }
