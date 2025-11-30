@@ -1,4 +1,4 @@
-use std::error::Error;
+use crate::tensor::storage::storage::StorageError;
 
 #[derive(PartialEq, Debug, Clone, Default, PartialOrd)]
 pub struct CpuStorage {
@@ -30,9 +30,13 @@ impl CpuStorage {
         &mut self.data
     }
 
-    pub fn try_clone(&self) -> Result<Self, Error> {
+    pub fn try_clone(&self) -> Result<Self, StorageError> {
         Ok(CpuStorage {
             data: self.data.to_vec().into_boxed_slice(),
         })
+    }
+
+    pub fn to_vec(&self) -> Vec<f32> {
+        self.data.to_vec()
     }
 }

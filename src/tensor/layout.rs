@@ -1,6 +1,6 @@
-use std::{error::Error, ops::Range};
+use std::ops::Range;
 
-use thiserror::Error;
+use crate::error::NeuralNetworkError;
 
 #[derive(Eq, PartialEq, Debug, Clone, Default, PartialOrd, Ord, Hash)]
 pub struct Layout {
@@ -72,14 +72,20 @@ impl Layout {
         self.strides == expected_strides
     }
 
-    pub fn permute(&self, dimensions: &[usize]) -> Result<Self, LayoutError> {
+    pub fn permute(&self, dimensions: &[usize]) -> Result<Self, NeuralNetworkError> {
         if dimensions.len() != self.ndim() {
-            return Err(LayoutError::InvalidDimension);
+            return Err(NeuralNetworkError::InvalidDimension {
+                got: dimensions.len(),
+                max_dimension: self.ndim(),
+            });
         }
         let mut seen: Vec<bool> = vec![false; self.ndim()];
         for &dimension in dimensions {
             if dimension >= self.ndim() || seen[dimension] {
-                return Err(LayoutError::InvalidDimension);
+                return Err(NeuralNetworkError::InvalidDimension {
+                    got: dimensions.len(),
+                    max_dimension: self.ndim(),
+                });
             }
             seen[dimension] = true;
         }
@@ -98,47 +104,38 @@ impl Layout {
         })
     }
 
-    pub fn reshape(&self, new_shape: Vec<usize>) -> Result<Self, LayoutError> {
+    pub fn reshape(&self, new_shape: Vec<usize>) -> Result<Self, NeuralNetworkError> {
         if !self.is_contiguous() {
-            return Err(LayoutError::NotContiguous);
+            return Err(NeuralNetworkError::NotContiguous);
         }
         let old_size: usize = self.num_elements();
         let new_size: usize = new_shape.iter().product();
         if old_size != new_size {
-            return Err(LayoutError::IncompatibleShape);
+            return Err(NeuralNetworkError::IncompatibleShape {
+                shape_given: new_shape,
+                tensor_shape: self.shape().to_vec(),
+            });
         }
         Ok(Layout::new(new_shape))
     }
 
-    pub fn slice(&self, dimension: usize, range: Range<usize>) -> Result<Self, LayoutError> {
+    pub fn slice(&self, dimension: usize, range: Range<usize>) -> Result<Self, NeuralNetworkError> {
         if dimension >= self.ndim() {
-            return Err(LayoutError::InvalidDimension);
+            return Err(NeuralNetworkError::InvalidDimension {
+                got: dimension,
+                max_dimension: self.ndim(),
+            });
         }
         if range.end > self.shape[dimension] {
-            return Err(LayoutError::OutOfBounds);
+            return Err(NeuralNetworkError::OutOfBounds);
         }
         let mut new_shape: Vec<usize> = self.shape.clone();
         new_shape[dimension] = range.len();
-        let new_offset = self.offset + range.start * self.strides[dimension];
+        let new_offset: usize = self.offset + range.start * self.strides[dimension];
         Ok(Layout {
             shape: new_shape,
             strides: self.strides.clone(),
             offset: new_offset,
         })
     }
-}
-
-#[derive(Error, Debug)]
-pub enum LayoutError {
-    #[error("The tensor is not contiguous")]
-    NotContiguous,
-
-    #[error("the shape given is incompatible with tensor shape")]
-    IncompatibleShape,
-
-    #[error("the dimension given is not a good dimension in the tensor")]
-    InvalidDimension,
-
-    #[error("the range given is out of bounds")]
-    OutOfBounds,
 }
