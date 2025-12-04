@@ -1,4 +1,7 @@
-use crate::tensor::storage::storage::StorageError;
+use crate::{
+    error::NeuralNetworkError,
+    tensor::{storage::storage::StorageBackend, Device},
+};
 
 #[derive(PartialEq, Debug, Clone, Default, PartialOrd)]
 pub struct CpuStorage {
@@ -18,25 +21,41 @@ impl CpuStorage {
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.data.len()
+    pub fn filled(size: usize, value: f32) -> Self {
+        Self {
+            data: vec![value; size].into_boxed_slice(),
+        }
     }
 
-    pub fn as_slice(&self) -> &[f32] {
+    fn as_slice(&self) -> &[f32] {
         &self.data
     }
 
-    pub fn as_mut_slice(&mut self) -> &mut [f32] {
+    fn as_mut_slice(&mut self) -> &mut [f32] {
         &mut self.data
     }
 
-    pub fn try_clone(&self) -> Result<Self, StorageError> {
-        Ok(CpuStorage {
-            data: self.data.to_vec().into_boxed_slice(),
-        })
+    fn to_vec(&self) -> Vec<f32> {
+        self.data.to_vec()
+    }
+}
+
+impl StorageBackend for CpuStorage {
+    fn len(&self) -> usize {
+        self.data.len()
     }
 
-    pub fn to_vec(&self) -> Vec<f32> {
-        self.data.to_vec()
+    fn device(&self) -> Device {
+        Device::CPU
+    }
+
+    fn try_clone(&self) -> Result<Box<dyn StorageBackend>, NeuralNetworkError> {
+        Ok(Box::new(CpuStorage {
+            data: self.data.to_vec().into_boxed_slice(),
+        }))
+    }
+
+    fn to_cpu(&self) -> Result<Vec<f32>, NeuralNetworkError> {
+        Ok(self.data.to_vec())
     }
 }

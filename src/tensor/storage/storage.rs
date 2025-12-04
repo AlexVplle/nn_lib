@@ -1,18 +1,11 @@
-use crate::{
-    error::NeuralNetworkError,
-    tensor::{storage::cpu_storage::CpuStorage, Device},
-};
+use crate::{error::NeuralNetworkError, tensor::Device};
 
-#[derive(PartialEq, Debug, Clone, PartialOrd)]
-pub enum Storage {
-    Cpu(CpuStorage),
-}
-
-impl Storage {
-    pub fn zeros(size: usize, device: Device) -> Result<Storage, NeuralNetworkError> {
-        match device {
-            Device::CPU => Ok(Storage::Cpu(CpuStorage::new(size))),
-            Device::CUDA => 
-        }
+pub trait StorageBackend {
+    fn len(&self) -> usize;
+    fn device(&self) -> Device;
+    fn try_clone(&self) -> Result<Box<dyn StorageBackend>, NeuralNetworkError>;
+    fn to_cpu(&self) -> Result<Vec<f32>, NeuralNetworkError>;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }

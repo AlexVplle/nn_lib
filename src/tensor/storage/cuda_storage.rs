@@ -1,4 +1,7 @@
-use crate::error::NeuralNetworkError;
+use crate::{
+    error::NeuralNetworkError,
+    tensor::{storage::storage::StorageBackend, Device},
+};
 
 #[derive(PartialEq, Debug, Clone, Default, PartialOrd)]
 pub struct CudaStorage {
@@ -13,11 +16,35 @@ impl CudaStorage {
         ))
     }
 
-    pub fn len(&self) -> usize {
+    pub fn from_vec(_data: Vec<f32>) -> Result<Self, NeuralNetworkError> {
+        Err(NeuralNetworkError::NotImplemented(
+            "Cuda not yet implemented",
+        ))
+    }
+
+    pub fn filled(_size: usize, _value: f32) -> Result<Self, NeuralNetworkError> {
+        Err(NeuralNetworkError::NotImplemented(
+            "Cuda not yet implemented",
+        ))
+    }
+}
+
+impl StorageBackend for CudaStorage {
+    fn len(&self) -> usize {
         self.len
     }
 
-    pub fn try_clone(&self) -> Result<Self, NeuralNetworkError> {
+    fn device(&self) -> Device {
+        Device::CUDA(self.device_id)
+    }
+
+    fn try_clone(&self) -> Result<Box<dyn StorageBackend>, NeuralNetworkError> {
+        Err(NeuralNetworkError::NotImplemented(
+            "Cuda not yet implemented",
+        ))
+    }
+
+    fn to_cpu(&self) -> Result<Vec<f32>, NeuralNetworkError> {
         Err(NeuralNetworkError::NotImplemented(
             "Cuda not yet implemented",
         ))
