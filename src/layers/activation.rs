@@ -3,7 +3,8 @@ use std::any::Any;
 
 use crate::activation::Activation;
 
-use super::{Layer, LayerError};
+use crate::error::NeuralNetworkError;
+use super::Layer;
 
 /// The `ActivationLayer` apply a activation function to it's input node to yield the output nodes.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -26,7 +27,7 @@ impl Layer for ActivationLayer {
     ///
     /// # Arguments
     /// * `input` - shape (n, i)
-    fn feed_forward_save(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
+    fn feed_forward_save(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
         self.input = Some(input.clone());
         self.feed_forward(input)
     }
@@ -36,7 +37,7 @@ impl Layer for ActivationLayer {
     ///
     /// # Arguments
     /// * `input` - shape (n, i)
-    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
+    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
         Ok(self.activation.apply(input))
     }
 
@@ -46,10 +47,10 @@ impl Layer for ActivationLayer {
     fn propagate_backward(
         &mut self,
         output_gradient: &ArrayD<f64>,
-    ) -> Result<ArrayD<f64>, LayerError> {
+    ) -> Result<ArrayD<f64>, NeuralNetworkError> {
         let input_gradient = match self.input.as_ref() {
             Some(input) => Ok(output_gradient * self.activation.apply_derivative(input)),
-            None => Err(LayerError::IllegalInputAccess),
+            None => Err(NeuralNetworkError::IllegalInputAccess),
         };
         input_gradient
     }

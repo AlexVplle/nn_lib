@@ -3,7 +3,8 @@ use std::any::Any;
 
 use crate::initialization::InitializerType;
 
-use super::{Layer, LayerError, Trainable};
+use crate::error::NeuralNetworkError;
+use super::{Layer, Trainable};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct DenseLayer {
@@ -42,7 +43,7 @@ impl Layer for DenseLayer {
     ///
     /// # Arguments
     /// * `input` - shape (n, i)
-    fn feed_forward_save(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
+    fn feed_forward_save(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
         // TODO find a without clone method, like in place mutation
         self.last_batch_input = Some(input.clone());
         self.feed_forward(input)
@@ -54,7 +55,7 @@ impl Layer for DenseLayer {
     ///
     /// # Arguments
     /// * `input` - shape (n, i)
-    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
+    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
         let batch_size = input.shape()[0];
         let input_2d = input.view().into_shape((batch_size, self.input_size))?;
         let weight_2d = self
@@ -76,7 +77,7 @@ impl Layer for DenseLayer {
     fn propagate_backward(
         &mut self,
         output_gradient: &ArrayD<f64>,
-    ) -> Result<ArrayD<f64>, LayerError> {
+    ) -> Result<ArrayD<f64>, NeuralNetworkError> {
         let input_gradient = match self.last_batch_input.as_ref() {
             Some(input) => {
                 let batch_size = output_gradient.shape()[0];
@@ -100,7 +101,7 @@ impl Layer for DenseLayer {
 
                 Ok((output_grad_2d.dot(&weight_2d.t())).into_dyn())
             }
-            None => Err(LayerError::IllegalInputAccess),
+            None => Err(NeuralNetworkError::IllegalInputAccess),
         };
         input_gradient
     }

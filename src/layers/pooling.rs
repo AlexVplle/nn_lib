@@ -1,7 +1,8 @@
 use ndarray::{s, ArrayD, IxDyn};
 use std::any::Any;
 
-use super::{Layer, LayerError};
+use crate::error::NeuralNetworkError;
+use super::Layer;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct MaxPoolingLayer {
@@ -78,13 +79,13 @@ impl MaxPoolingLayer {
 }
 
 impl Layer for MaxPoolingLayer {
-    fn feed_forward_save(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
+    fn feed_forward_save(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
         self.input = Some(input.clone());
         self.find_max_indices();
         self.feed_forward(input)
     }
 
-    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
+    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
         let batch_size: usize = input.shape()[0];
         let (pool_height, pool_width): (usize, usize) = self.pool_size;
         let (output_height, output_width, output_channel) = self.output_size;
@@ -123,7 +124,7 @@ impl Layer for MaxPoolingLayer {
     fn propagate_backward(
         &mut self,
         output_gradient: &ArrayD<f64>,
-    ) -> Result<ArrayD<f64>, LayerError> {
+    ) -> Result<ArrayD<f64>, NeuralNetworkError> {
         let input = self
             .input
             .as_ref()

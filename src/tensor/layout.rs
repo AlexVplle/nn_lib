@@ -29,7 +29,7 @@ impl Layout {
 
     fn compute_strides(shape: &[usize]) -> Vec<usize> {
         let dimension: usize = shape.len();
-        let mut strides: Vec<usize> = vec![1, dimension];
+        let mut strides: Vec<usize> = vec![1; dimension];
         for i in (0..dimension.saturating_sub(1)).rev() {
             strides[i] = strides[i + 1] * shape[i + 1];
         }
@@ -137,5 +137,222 @@ impl Layout {
             strides: self.strides.clone(),
             offset: new_offset,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new() {
+        let shape: Vec<usize> = vec![2, 3, 4];
+        let layout: Layout = Layout::new(shape);
+        assert_eq!(layout.shape, vec![2, 3, 4]);
+        assert_eq!(layout.strides, vec![12, 4, 1]);
+        assert_eq!(layout.offset, 0);
+    }
+
+    #[test]
+    fn test_new_1d() {
+        let shape: Vec<usize> = vec![5];
+        let layout: Layout = Layout::new(shape);
+        assert_eq!(layout.shape, vec![5]);
+        assert_eq!(layout.strides, vec![1]);
+        assert_eq!(layout.offset, 0);
+    }
+
+    #[test]
+    fn test_new_empty() {
+        let shape: Vec<usize> = vec![];
+        let layout: Layout = Layout::new(shape);
+        assert_eq!(layout.shape, Vec::<usize>::new());
+        assert_eq!(layout.strides, Vec::<usize>::new());
+        assert_eq!(layout.offset, 0);
+    }
+
+    #[test]
+    fn test_with_offset() {
+        let shape: Vec<usize> = vec![2, 3];
+        let strides: Vec<usize> = vec![3, 1];
+        let offset: usize = 5;
+        let layout: Layout = Layout::with_offset(shape, strides, offset);
+        assert_eq!(layout.shape, vec![2, 3]);
+        assert_eq!(layout.strides, vec![3, 1]);
+        assert_eq!(layout.offset, 5);
+    }
+
+    #[test]
+    fn test_shape() {
+        let layout: Layout = Layout::new(vec![2, 3, 4]);
+        assert_eq!(layout.shape(), &[2, 3, 4]);
+    }
+
+    #[test]
+    fn test_strides() {
+        let layout: Layout = Layout::new(vec![2, 3, 4]);
+        assert_eq!(layout.strides(), &[12, 4, 1]);
+    }
+
+    #[test]
+    fn test_offset() {
+        let layout: Layout = Layout::with_offset(vec![2, 3], vec![3, 1], 10);
+        assert_eq!(layout.offset(), 10);
+    }
+
+    #[test]
+    fn test_ndim() {
+        let layout1: Layout = Layout::new(vec![2, 3, 4]);
+        let layout2: Layout = Layout::new(vec![5]);
+        let layout3: Layout = Layout::new(vec![]);
+        assert_eq!(layout1.ndim(), 3);
+        assert_eq!(layout2.ndim(), 1);
+        assert_eq!(layout3.ndim(), 0);
+    }
+
+    #[test]
+    fn test_num_elements() {
+        let layout1: Layout = Layout::new(vec![2, 3, 4]);
+        let layout2: Layout = Layout::new(vec![5]);
+        let layout3: Layout = Layout::new(vec![]);
+        assert_eq!(layout1.num_elements(), 24);
+        assert_eq!(layout2.num_elements(), 5);
+        assert_eq!(layout3.num_elements(), 1);
+    }
+
+    #[test]
+    fn test_index() {
+        let layout: Layout = Layout::new(vec![2, 3, 4]);
+        assert_eq!(layout.index(&[0, 0, 0]), 0);
+        assert_eq!(layout.index(&[0, 0, 1]), 1);
+        assert_eq!(layout.index(&[0, 1, 0]), 4);
+        assert_eq!(layout.index(&[1, 0, 0]), 12);
+        assert_eq!(layout.index(&[1, 2, 3]), 23);
+    }
+
+    #[test]
+    fn test_index_with_offset() {
+        let layout: Layout = Layout::with_offset(vec![2, 3], vec![3, 1], 10);
+        assert_eq!(layout.index(&[0, 0]), 10);
+        assert_eq!(layout.index(&[0, 1]), 11);
+        assert_eq!(layout.index(&[1, 0]), 13);
+        assert_eq!(layout.index(&[1, 2]), 15);
+    }
+
+    #[test]
+    fn test_is_contiguous() {
+        let contiguous: Layout = Layout::new(vec![2, 3, 4]);
+        assert!(contiguous.is_contiguous());
+    }
+
+    #[test]
+    fn test_is_not_contiguous() {
+        let non_contiguous: Layout = Layout::with_offset(vec![2, 3], vec![1, 3], 0);
+        assert!(!non_contiguous.is_contiguous());
+    }
+
+    #[test]
+    fn test_permute() {
+        let layout: Layout = Layout::new(vec![2, 3, 4]);
+        let permuted: Result<Layout, NeuralNetworkError> = layout.permute(&[2, 0, 1]);
+        assert!(permuted.is_ok());
+        let permuted: Layout = permuted.unwrap();
+        assert_eq!(permuted.shape(), &[4, 2, 3]);
+        assert_eq!(permuted.strides(), &[1, 12, 4]);
+        assert_eq!(permuted.offset(), 0);
+    }
+
+    #[test]
+    fn test_permute_invalid_dimension() {
+        let layout: Layout = Layout::new(vec![2, 3, 4]);
+        let result: Result<Layout, NeuralNetworkError> = layout.permute(&[0, 1]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_permute_out_of_bounds() {
+        let layout: Layout = Layout::new(vec![2, 3, 4]);
+        let result: Result<Layout, NeuralNetworkError> = layout.permute(&[0, 1, 5]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_permute_duplicate() {
+        let layout: Layout = Layout::new(vec![2, 3, 4]);
+        let result: Result<Layout, NeuralNetworkError> = layout.permute(&[0, 1, 1]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_reshape() {
+        let layout: Layout = Layout::new(vec![2, 3, 4]);
+        let reshaped: Result<Layout, NeuralNetworkError> = layout.reshape(vec![6, 4]);
+        assert!(reshaped.is_ok());
+        let reshaped: Layout = reshaped.unwrap();
+        assert_eq!(reshaped.shape(), &[6, 4]);
+        assert_eq!(reshaped.num_elements(), 24);
+    }
+
+    #[test]
+    fn test_reshape_incompatible_size() {
+        let layout: Layout = Layout::new(vec![2, 3, 4]);
+        let result: Result<Layout, NeuralNetworkError> = layout.reshape(vec![5, 5]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_reshape_non_contiguous() {
+        let non_contiguous: Layout = Layout::with_offset(vec![2, 3], vec![1, 3], 0);
+        let result: Result<Layout, NeuralNetworkError> = non_contiguous.reshape(vec![6]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_slice() {
+        let layout: Layout = Layout::new(vec![5, 4, 3]);
+        let sliced: Result<Layout, NeuralNetworkError> = layout.slice(0, 1..3);
+        assert!(sliced.is_ok());
+        let sliced: Layout = sliced.unwrap();
+        assert_eq!(sliced.shape(), &[2, 4, 3]);
+        assert_eq!(sliced.strides(), &[12, 3, 1]);
+        assert_eq!(sliced.offset(), 12);
+    }
+
+    #[test]
+    fn test_slice_invalid_dimension() {
+        let layout: Layout = Layout::new(vec![5, 4, 3]);
+        let result: Result<Layout, NeuralNetworkError> = layout.slice(3, 0..2);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_slice_out_of_bounds() {
+        let layout: Layout = Layout::new(vec![5, 4, 3]);
+        let result: Result<Layout, NeuralNetworkError> = layout.slice(0, 0..10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_default() {
+        let layout: Layout = Layout::default();
+        assert_eq!(layout.shape(), &[]);
+        assert_eq!(layout.strides(), &[]);
+        assert_eq!(layout.offset(), 0);
+    }
+
+    #[test]
+    fn test_clone() {
+        let original: Layout = Layout::new(vec![2, 3, 4]);
+        let cloned: Layout = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn test_partial_eq() {
+        let layout1: Layout = Layout::new(vec![2, 3]);
+        let layout2: Layout = Layout::new(vec![2, 3]);
+        let layout3: Layout = Layout::new(vec![3, 2]);
+        assert_eq!(layout1, layout2);
+        assert_ne!(layout1, layout3);
     }
 }

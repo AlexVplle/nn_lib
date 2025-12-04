@@ -55,4 +55,7 @@ pub enum NeuralNetworkError {
 
     #[error("Feature not yet implemented: {0}")]
     NotImplemented(&'static str),
+
+    #[error("Lock error")]
+    LockError,
 }
