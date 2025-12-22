@@ -1,7 +1,8 @@
 use ndarray::{ArrayD, Dimension, IxDyn, ShapeError};
 use std::any::Any;
 
-use super::{Layer, LayerError};
+use crate::error::NeuralNetworkError;
+use super::Layer;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ReshapeLayer {
@@ -11,11 +12,11 @@ pub struct ReshapeLayer {
 }
 
 impl ReshapeLayer {
-    pub fn new(input_shape: &[usize], output_shape: &[usize]) -> Result<Self, LayerError> {
+    pub fn new(input_shape: &[usize], output_shape: &[usize]) -> Result<Self, NeuralNetworkError> {
         let input_elements: usize = input_shape.iter().product();
         let output_elements: usize = output_shape.iter().product();
         if input_elements != output_elements {
-            return Err(LayerError::ReshapeError(ShapeError::from_kind(
+            return Err(NeuralNetworkError::ReshapeError(ShapeError::from_kind(
                 ndarray::ErrorKind::IncompatibleShape,
             )));
         }
@@ -28,19 +29,19 @@ impl ReshapeLayer {
 }
 
 impl Layer for ReshapeLayer {
-    fn feed_forward_save(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
+    fn feed_forward_save(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
         self.input = Some(input.clone());
         self.feed_forward(input)
     }
 
-    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
+    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
         let batch_size: usize = input.shape()[0];
         let mut shape: Vec<usize> = Vec::with_capacity(self.output_shape.ndim() + 1);
         shape.push(batch_size);
         shape.extend_from_slice(self.output_shape.as_array_view().as_slice().unwrap());
 
         if input.shape().iter().product::<usize>() != shape.iter().product() {
-            return Err(LayerError::ReshapeError(ShapeError::from_kind(
+            return Err(NeuralNetworkError::ReshapeError(ShapeError::from_kind(
                 ndarray::ErrorKind::IncompatibleShape,
             )));
         }
@@ -50,13 +51,13 @@ impl Layer for ReshapeLayer {
     fn propagate_backward(
         &mut self,
         output_gradient: &ArrayD<f64>,
-    ) -> Result<ArrayD<f64>, LayerError> {
+    ) -> Result<ArrayD<f64>, NeuralNetworkError> {
         let batch_size: usize = output_gradient.shape()[0];
         let mut shape: Vec<usize> = Vec::with_capacity(self.output_shape.ndim() + 1);
         shape.push(batch_size);
         shape.extend_from_slice(self.input_shape.as_array_view().as_slice().unwrap());
         if output_gradient.shape().iter().product::<usize>() != shape.iter().product() {
-            return Err(LayerError::ReshapeError(ShapeError::from_kind(
+            return Err(NeuralNetworkError::ReshapeError(ShapeError::from_kind(
                 ndarray::ErrorKind::IncompatibleShape,
             )));
         }

@@ -3,7 +3,8 @@ use std::any::Any;
 
 use crate::initialization::InitializerType;
 
-use super::{Layer, LayerError, Trainable};
+use crate::error::NeuralNetworkError;
+use super::{Layer, Trainable};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ConvolutionalLayer {
@@ -240,12 +241,12 @@ impl ConvolutionalLayer {
 }
 
 impl Layer for ConvolutionalLayer {
-    fn feed_forward_save(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
+    fn feed_forward_save(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
         self.input = Some(input.clone());
         self.feed_forward(input)
     }
 
-    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
+    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
         let output = self.convolve(&input.clone());
         Ok(output)
     }
@@ -253,7 +254,7 @@ impl Layer for ConvolutionalLayer {
     fn propagate_backward(
         &mut self,
         output_gradient: &ArrayD<f64>,
-    ) -> Result<ArrayD<f64>, LayerError> {
+    ) -> Result<ArrayD<f64>, NeuralNetworkError> {
         let input = self
             .input
             .as_ref()

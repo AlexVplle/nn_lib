@@ -1,7 +1,8 @@
 use crate::{
     activation::Activation,
     cost::CostFunction,
-    layers::{ActivationLayer, ConvolutionalLayer, DenseLayer, Layer, LayerError},
+    error::NeuralNetworkError,
+    layers::{ActivationLayer, ConvolutionalLayer, DenseLayer, Layer},
     metrics::{Benchmark, History, Metrics},
     optimizer::Optimizer,
 };
@@ -9,7 +10,6 @@ use log::debug;
 use ndarray::{ArrayD, Axis};
 use ndarray_rand::rand::seq::SliceRandom;
 use ndarray_rand::rand::thread_rng;
-use thiserror::Error;
 
 #[derive(Default)]
 pub struct SequentialBuilder {
@@ -115,7 +115,7 @@ impl Sequential {
     /// # Arguments
     /// * `input` : batched input, of size (n, dim i) where **dim i** is the dimension of the
     /// network first layer and **n** is the number of point in the batch.
-    pub fn predict(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
+    pub fn predict(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
         let mut output: ArrayD<f64> = input.clone();
         for layer in &self.layers {
             output = layer.feed_forward(&output)?;
@@ -173,11 +173,11 @@ impl Sequential {
         validation_data: Option<(&ArrayD<f64>, &ArrayD<f64>)>,
         epochs: usize,
         batch_size: usize,
-    ) -> Result<(History, Option<History>), LayerError> {
+    ) -> Result<(History, Option<History>), NeuralNetworkError> {
         let (x_train, y_train) = train_data;
 
         if x_train.shape()[0] != y_train.shape()[0] {
-            return Err(LayerError::DimensionMismatch);
+            return Err(NeuralNetworkError::DimensionMismatch);
         }
 
         let mut train_history = History::new();
@@ -206,7 +206,7 @@ impl Sequential {
     fn process_epoch(
         &mut self,
         batches: &[(ArrayD<f64>, ArrayD<f64>)],
-    ) -> Result<Benchmark, LayerError> {
+    ) -> Result<Benchmark, NeuralNetworkError> {
         let metrics: Metrics = self
             .metrics
             .clone()
@@ -249,7 +249,7 @@ impl Sequential {
             .collect::<Vec<_>>()
     }
 
-    pub fn feed_forward(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, LayerError> {
+    pub fn feed_forward(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
         let mut output = input.clone();
         for layer in &mut self.layers {
             output = layer.feed_forward_save(&output)?;
@@ -261,7 +261,7 @@ impl Sequential {
         &mut self,
         net_output: &ArrayD<f64>,
         observed: &ArrayD<f64>,
-    ) -> Result<(), LayerError> {
+    ) -> Result<(), NeuralNetworkError> {
         let mut grad = self
             .cost_function
             .cost_output_gradient(net_output, observed);
@@ -291,16 +291,4 @@ impl Sequential {
         }
         Ok(())
     }
-}
-
-#[derive(Error, Debug)]
-pub enum NeuralNetworkError {
-    #[error("Missing a last activation layer before the output")]
-    MissingActivationLayer,
-
-    #[error(
-        "Invalid output activation layer,
-        see CostFunction::output_dependant for detailed explanation"
-    )]
-    WrongOutputActivationLayer,
 }
