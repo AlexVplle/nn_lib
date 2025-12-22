@@ -33,6 +33,45 @@ impl Backend for CpuBackend {
         Ok(Box::new(CpuStorage::from_vec(result)))
     }
 
+    fn tanh(&self, storage: &Arc<RwLock<Box<dyn StorageBackend>>>) -> Result<Box<dyn StorageBackend>, NeuralNetworkError> {
+        let storage = storage.read().expect("Lock poisoned");
+
+        let storage_cpu = storage.as_any().downcast_ref::<CpuStorage>().expect("CpuBackend expects CPU storage");
+
+        let storage_data = storage_cpu.as_slice();
+
+        let result: Vec<f32> = storage_data.into_iter().map(|a| a.tanh()).collect();
+
+        Ok(Box::new(CpuStorage::from_vec(result)))
+    }
+
+    fn sigmoid(&self, storage: &Arc<RwLock<Box<dyn StorageBackend>>>) -> Result<Box<dyn StorageBackend>, NeuralNetworkError> {
+        let storage = storage.read().expect("Lock poisoned");
+
+        let storage_cpu = storage.as_any().downcast_ref::<CpuStorage>().expect("CpuBackend expects CPU storage");
+
+        let storage_data = storage_cpu.as_slice();
+
+        let result: Vec<f32> = storage_data.into_iter().map(|a| 1.0 / (1.0 + (-a).exp())).collect();
+
+        Ok(Box::new(CpuStorage::from_vec(result)))
+    }
+
+    fn softmax(&self, storage: &Arc<RwLock<Box<dyn StorageBackend>>>) -> Result<Box<dyn StorageBackend>, NeuralNetworkError> {
+        let storage = storage.read().expect("Lock poisoned");
+
+        let storage_cpu = storage.as_any().downcast_ref::<CpuStorage>().expect("CpuBackend expects CPU storage");
+
+        let storage_data = storage_cpu.as_slice();
+
+        let max_val = storage_data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let exp_values: Vec<f32> = storage_data.iter().map(|&x| (x - max_val).exp()).collect();
+        let sum_exp_values: f32 = exp_values.iter().sum();
+        let result: Vec<f32> = exp_values.iter().map(|&x| x / sum_exp_values).collect();
+
+        Ok(Box::new(CpuStorage::from_vec(result)))
+    }
+
     fn device(&self) -> Device {
         Device::CPU
     }
@@ -324,5 +363,202 @@ mod tests {
         let result_data: &[f32] = result_cpu.as_slice();
         
         assert_eq!(result_data, &[1000.0, 0.0, 5000.0]);
+    }
+
+    #[test]
+    fn test_cpu_backend_tanh_simple() {
+        let backend: CpuBackend = CpuBackend;
+        
+        let storage: Arc<RwLock<Box<dyn StorageBackend>>> = 
+            Arc::new(RwLock::new(Box::new(CpuStorage::from_vec(vec![-2.0, -1.0, 0.0, 1.0, 2.0]))));
+        
+        let result: Box<dyn StorageBackend> = backend.tanh(&storage).unwrap();
+        
+        let result_cpu: &CpuStorage = result.as_any()
+            .downcast_ref::<CpuStorage>()
+            .expect("Result should be CpuStorage");
+        
+        let result_data: &[f32] = result_cpu.as_slice();
+        
+        let expected: Vec<f32> = vec![-0.96402758, -0.76159416, 0.0, 0.76159416, 0.96402758];
+        let epsilon: f32 = 1e-6;
+        for (res, exp) in result_data.iter().zip(expected.iter()) {
+            assert!((res - exp).abs() < epsilon);
+        }
+    }
+
+    #[test]
+    fn test_cpu_backend_tanh_large_values() {
+        let backend: CpuBackend = CpuBackend;
+
+        let storage: Arc<RwLock<Box<dyn StorageBackend>>> = 
+            Arc::new(RwLock::new(Box::new(CpuStorage::from_vec(vec![1000.0, -1000.0, 5000.0, -5000.0]))));
+        let result: Box<dyn StorageBackend> = backend.tanh(&storage).unwrap();
+        let result_cpu: &CpuStorage = result.as_any().downcast_ref::<CpuStorage>().unwrap();
+        let result_data: &[f32] = result_cpu.as_slice();
+        let expected: Vec<f32> = vec![1.0, -1.0, 1.0, -1.0];
+        let epsilon: f32 = 1e-6;
+        for (res, exp) in result_data.iter().zip(expected.iter()) {
+            assert!((res - exp).abs() < epsilon);
+        }
+    }
+
+    #[test]
+    fn test_cpu_backend_tanh_small_values() {
+        let backend: CpuBackend = CpuBackend;
+        let storage: Arc<RwLock<Box<dyn StorageBackend>>> = 
+            Arc::new(RwLock::new(Box::new(CpuStorage::from_vec(vec![-0.0001, 0.0001, -0.00001]))));
+        let result: Box<dyn StorageBackend> = backend.tanh(&storage).unwrap();
+        let result_cpu: &CpuStorage = result.as_any().downcast_ref::<CpuStorage>().unwrap();
+        let result_data: &[f32] = result_cpu.as_slice();
+        let expected: Vec<f32> = vec![-0.0001, 0.0001, -0.00001];
+        let epsilon: f32 = 1e-6;
+        for (res, exp) in result_data.iter().zip(expected.iter()) {
+            assert!((res - exp).abs() < epsilon);
+        }
+    }
+
+    #[test]
+    fn test_cpu_backend_tanh_zeros() {
+        let backend: CpuBackend = CpuBackend;
+        let storage: Arc<RwLock<Box<dyn StorageBackend>>> = 
+            Arc::new(RwLock::new(Box::new(CpuStorage::from_vec(vec![0.0, 0.0, 0.0]))));
+        let result: Box<dyn StorageBackend> = backend.tanh(&storage).unwrap();
+        let result_cpu: &CpuStorage = result.as_any().downcast_ref::<CpuStorage>().unwrap();
+        let result_data: &[f32] = result_cpu.as_slice();
+        assert_eq!(result_data, &[0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_cpu_backend_sigmoid_simple() {
+        let backend: CpuBackend = CpuBackend;
+        
+        let storage: Arc<RwLock<Box<dyn StorageBackend>>> = 
+            Arc::new(RwLock::new(Box::new(CpuStorage::from_vec(vec![-2.0, -1.0, 0.0, 1.0, 2.0]))));
+        
+        let result: Box<dyn StorageBackend> = backend.sigmoid(&storage).unwrap();
+        
+        let result_cpu: &CpuStorage = result.as_any()
+            .downcast_ref::<CpuStorage>()
+            .expect("Result should be CpuStorage");
+        
+        let result_data: &[f32] = result_cpu.as_slice();
+        
+        let expected: Vec<f32> = vec![0.11920292, 0.26894143, 0.5, 0.73105858, 0.88079708];
+        let epsilon: f32 = 1e-6;
+        for (res, exp) in result_data.iter().zip(expected.iter()) {
+            assert!((res - exp).abs() < epsilon);
+        }
+    }
+
+    #[test]
+    fn test_cpu_backend_sigmoid_large_values() {
+        let backend: CpuBackend = CpuBackend;
+        let storage: Arc<RwLock<Box<dyn StorageBackend>>> = 
+            Arc::new(RwLock::new(Box::new(CpuStorage::from_vec(vec![1000.0, -1000.0, 5000.0, -5000.0]))));
+        let result: Box<dyn StorageBackend> = backend.sigmoid(&storage).unwrap();
+        let result_cpu: &CpuStorage = result.as_any().downcast_ref::<CpuStorage>().unwrap();
+        let result_data: &[f32] = result_cpu.as_slice();
+        let expected: Vec<f32> = vec![1.0, 0.0, 1.0, 0.0];
+        let epsilon: f32 = 1e-6;
+        for (res, exp) in result_data.iter().zip(expected.iter()) {
+            assert!((res - exp).abs() < epsilon);
+        }
+    }
+
+    #[test]
+    fn test_cpu_backend_sigmoid_small_values() {
+        let backend: CpuBackend = CpuBackend;
+        let storage: Arc<RwLock<Box<dyn StorageBackend>>> = 
+            Arc::new(RwLock::new(Box::new(CpuStorage::from_vec(vec![-0.0001, 0.0001, -0.00001]))));
+        let result: Box<dyn StorageBackend> = backend.sigmoid(&storage).unwrap();
+        let result_cpu: &CpuStorage = result.as_any().downcast_ref::<CpuStorage>().unwrap();
+        let result_data: &[f32] = result_cpu.as_slice();
+        let expected: Vec<f32> = vec![0.499975, 0.500025, 0.4999975];
+        let epsilon: f32 = 1e-6;
+        for (res, exp) in result_data.iter().zip(expected.iter()) {
+            assert!((res - exp).abs() < epsilon);
+        }
+
+    }
+
+    #[test]
+    fn test_cpu_backend_sigmoid_zeros() {
+        let backend: CpuBackend = CpuBackend;
+        let storage: Arc<RwLock<Box<dyn StorageBackend>>> =
+            Arc::new(RwLock::new(Box::new(CpuStorage::from_vec(vec![0.0, 0.0, 0.0]))));
+        let result: Box<dyn StorageBackend> = backend.sigmoid(&storage).unwrap();
+        let result_cpu: &CpuStorage = result.as_any().downcast_ref::<CpuStorage>().unwrap();
+        let result_data: &[f32] = result_cpu.as_slice();
+        assert_eq!(result_data, &[0.5, 0.5, 0.5]);
+    }
+
+    #[test]
+    fn test_cpu_backend_softmax_simple() {
+        let backend: CpuBackend = CpuBackend;
+        let storage: Arc<RwLock<Box<dyn StorageBackend>>> = 
+            Arc::new(RwLock::new(Box::new(CpuStorage::from_vec(vec![1.0, 2.0, 3.0]))));
+        let result: Box<dyn StorageBackend> = backend.softmax(&storage).unwrap();
+        let result_cpu: &CpuStorage = result.as_any().downcast_ref::<CpuStorage>().unwrap();
+        let result_data: &[f32] = result_cpu.as_slice();
+        let exp_values: Vec<f32> = vec![1.0f32.exp(), 2.0f32.exp(), 3.0f32.exp()];
+        let sum_exp_values: f32 = exp_values.iter().sum();
+        let expected: Vec<f32> = exp_values.iter().map(|&x| x / sum_exp_values).collect();
+        let epsilon: f32 = 1e-6;
+        for (res, exp) in result_data.iter().zip(expected.iter()) {
+            assert!((res - exp).abs() < epsilon);
+        }
+    }
+
+    #[test]
+    fn test_cpu_backend_softmax_large_values() {
+        let backend: CpuBackend = CpuBackend;
+        let storage: Arc<RwLock<Box<dyn StorageBackend>>> = 
+            Arc::new(RwLock::new(Box::new(CpuStorage::from_vec(vec![1000.0, 1001.0, 1002.0]))));
+        let result: Box<dyn StorageBackend> = backend.softmax(&storage).unwrap();
+        let result_cpu: &CpuStorage = result.as_any().downcast_ref::<CpuStorage>().unwrap();
+        let result_data: &[f32] = result_cpu.as_slice();
+        let exp_values: Vec<f32> = vec![0.0f32.exp(), 1.0f32.exp(), 2.0f32.exp()];
+        let sum_exp_values: f32 = exp_values.iter().sum();
+        let expected: Vec<f32> = exp_values.iter().map(|&x| x / sum_exp_values).collect();
+        let epsilon: f32 = 1e-6;
+        for (res, exp) in result_data.iter().zip(expected.iter()) {
+            assert!((res - exp).abs() < epsilon);
+        }
+    }
+
+    #[test]
+    fn test_cpu_backend_softmax_negative_values() {
+        let backend: CpuBackend = CpuBackend;
+        let storage: Arc<RwLock<Box<dyn StorageBackend>>> =
+            Arc::new(RwLock::new(Box::new(CpuStorage::from_vec(vec![-1.0, -2.0, -3.0]))));
+        let result: Box<dyn StorageBackend> = backend.softmax(&storage).unwrap();
+        let result_cpu: &CpuStorage = result.as_any().downcast_ref::<CpuStorage>().unwrap();
+        let result_data: &[f32] = result_cpu.as_slice();
+
+        let exp_values: Vec<f32> = vec![(-1.0_f32).exp(), (-2.0_f32).exp(), (-3.0_f32).exp()];
+        let sum_exp_values: f32 = exp_values.iter().sum();
+        let expected: Vec<f32> = exp_values.iter().map(|&x| x / sum_exp_values).collect();
+
+        let epsilon: f32 = 1e-6;
+        for (res, exp) in result_data.iter().zip(expected.iter()) {
+            assert!((res - exp).abs() < epsilon);
+        }
+    }
+
+
+    #[test]
+    fn test_cpu_backend_softmax_zeros() {
+        let backend: CpuBackend = CpuBackend;
+        let storage: Arc<RwLock<Box<dyn StorageBackend>>> = 
+            Arc::new(RwLock::new(Box::new(CpuStorage::from_vec(vec![0.0, 0.0, 0.0]))));
+        let result: Box<dyn StorageBackend> = backend.softmax(&storage).unwrap();
+        let result_cpu: &CpuStorage = result.as_any().downcast_ref::<CpuStorage>().unwrap();
+        let result_data: &[f32] = result_cpu.as_slice();
+        let expected: Vec<f32> = vec![1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0];
+        let epsilon: f32 = 1e-6;
+        for (res, exp) in result_data.iter().zip(expected.iter()) {
+            assert!((res - exp).abs() < epsilon);
+        }
     }
 }
