@@ -8,7 +8,7 @@ fn add_arrays<F: Float>(a: &Array<Line<F>>, b: &Array<Line<F>>, c: &mut Array<Li
 }
 
 fn main() {
-    type Runtime = cubecl_wgpu::WgpuRuntime;
+    type Runtime = cubecl_cuda::CudaRuntime;
     let device = Default::default();
     let client = Runtime::client(&device);
     
