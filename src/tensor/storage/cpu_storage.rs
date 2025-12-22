@@ -3,6 +3,8 @@ use crate::{
     tensor::{storage::storage::StorageBackend, Device},
 };
 
+use std::any::Any;
+
 #[derive(PartialEq, Debug, Clone, Default, PartialOrd)]
 pub struct CpuStorage {
     data: Box<[f32]>,
@@ -27,7 +29,7 @@ impl CpuStorage {
         }
     }
 
-    fn as_slice(&self) -> &[f32] {
+    pub fn as_slice(&self) -> &[f32] {
         &self.data
     }
 
@@ -57,6 +59,14 @@ impl StorageBackend for CpuStorage {
 
     fn to_cpu(&self) -> Result<Vec<f32>, NeuralNetworkError> {
         Ok(self.data.to_vec())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 

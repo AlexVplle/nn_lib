@@ -1,11 +1,12 @@
 use std::{
-    ops::Deref,
+    ops::{Deref, Add},
     sync::{Arc, RwLock, RwLockReadGuard},
 };
 
 use crate::{
     error::NeuralNetworkError,
     tensor::{
+        backend::Backend,
         storage::{cpu_storage::CpuStorage, storage::StorageBackend},
         Device, Layout,
     },
@@ -120,6 +121,25 @@ impl Tensor {
         storage.to_cpu()
     }
 }
+
+impl Add for Tensor {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        assert_eq!(self.device(), other.device(), "Cannot add tensors on different devices: {:?} and {:?}", self.device(), other.device());
+        assert_eq!(self.shape(), other.shape(), "Cannot add tensors with different shapes: {:?} and {:?}", self.shape(), other.shape());
+        let backend: Arc<dyn Backend> = self.device().backend();
+        let result_storage = backend.add(&self.storage, &other.storage).expect("Backend add failed");
+        Self(Arc::new(Tensor_ {
+            storage: Arc::new(RwLock::new(result_storage)),
+            layout: Layout::new(self.shape().to_vec()),
+            device: self.device.clone(),
+            gradient: None,
+            require_gradient: self.require_gradient || other.require_gradient,
+        }))
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -279,5 +299,167 @@ mod tests {
     fn test_deref_require_gradient() {
         let tensor: Tensor = Tensor::zeros(vec![2, 3], Device::CPU).unwrap();
         assert!(!tensor.require_gradient);
+    }
+
+    #[test]
+    fn test_add_chain() {
+        let a: Tensor = Tensor::new(vec![1.0, 2.0], vec![2], Device::CPU).unwrap();
+        let b: Tensor = Tensor::new(vec![10.0, 20.0], vec![2], Device::CPU).unwrap();
+        let c: Tensor = Tensor::new(vec![100.0, 200.0], vec![2], Device::CPU).unwrap();
+        
+        let result: Tensor = a + b + c;
+        
+        let data: Vec<f32> = result.to_cpu().unwrap();
+        assert_eq!(data, vec![111.0, 222.0]);
+    }
+
+    #[test]
+    fn test_add_same_tensor() {
+        let a: Tensor = Tensor::new(vec![5.0, 10.0, 15.0], vec![3], Device::CPU).unwrap();
+        let b: Tensor = a.clone();
+        
+        let result: Tensor = a + b;
+        
+        let data: Vec<f32> = result.to_cpu().unwrap();
+        assert_eq!(data, vec![10.0, 20.0, 30.0]);
+    }
+
+    #[test]
+    fn test_add_result_device() {
+        let a: Tensor = Tensor::new(vec![1.0, 2.0], vec![2], Device::CPU).unwrap();
+        let b: Tensor = Tensor::new(vec![3.0, 4.0], vec![2], Device::CPU).unwrap();
+        
+        let c: Tensor = a + b;
+        
+        assert_eq!(*c.device(), Device::CPU);
+    }
+
+    #[test]
+    fn test_add_result_shape() {
+        let a: Tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2], Device::CPU).unwrap();
+        let b: Tensor = Tensor::new(vec![5.0, 6.0, 7.0, 8.0], vec![2, 2], Device::CPU).unwrap();
+        
+        let c: Tensor = a + b;
+        
+        assert_eq!(c.shape(), &[2, 2]);
+    }
+
+    #[test]
+    fn test_add_result_is_contiguous() {
+        let a: Tensor = Tensor::new(vec![1.0, 2.0, 3.0], vec![3], Device::CPU).unwrap();
+        let b: Tensor = Tensor::new(vec![4.0, 5.0, 6.0], vec![3], Device::CPU).unwrap();
+        
+        let c: Tensor = a + b;
+        
+        assert!(c.is_contiguous());
+    }
+
+    #[test]
+    fn test_add_result_strides() {
+        let a: Tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3], Device::CPU).unwrap();
+        let b: Tensor = Tensor::new(vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0], vec![2, 3], Device::CPU).unwrap();
+        
+        let c: Tensor = a + b;
+        
+        assert_eq!(c.strides(), &[3, 1]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot add tensors with different shapes")]
+    fn test_add_shape_mismatch() {
+        let a: Tensor = Tensor::new(vec![1.0, 2.0], vec![2], Device::CPU).unwrap();
+        let b: Tensor = Tensor::new(vec![1.0, 2.0, 3.0], vec![3], Device::CPU).unwrap();
+        
+        let _c: Tensor = a + b;
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot add tensors with different shapes")]
+    fn test_add_dimension_mismatch() {
+        let a: Tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![4], Device::CPU).unwrap();
+        let b: Tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2], Device::CPU).unwrap();
+        
+        let _c: Tensor = a + b;
+    }
+
+    #[test]
+    fn test_add_preserves_clone_semantics() {
+        let a: Tensor = Tensor::new(vec![1.0, 2.0], vec![2], Device::CPU).unwrap();
+        let b: Tensor = Tensor::new(vec![3.0, 4.0], vec![2], Device::CPU).unwrap();
+        
+        let c: Tensor = a + b;
+        let d: Tensor = c.clone();
+        
+        // c et d doivent partager le même Tensor_ interne
+        assert!(Arc::ptr_eq(&c.0, &d.0));
+    }
+
+    #[test]
+    fn test_add_multiple_operations() {
+        let a: Tensor = Tensor::new(vec![1.0, 2.0], vec![2], Device::CPU).unwrap();
+        let b: Tensor = Tensor::new(vec![3.0, 4.0], vec![2], Device::CPU).unwrap();
+        
+        let c: Tensor = a.clone() + b.clone();
+        let d: Tensor = c + a.clone();
+        let e: Tensor = d + b;
+        
+        let result: Vec<f32> = e.to_cpu().unwrap();
+        // (1+3) + 1 + 3 = 8
+        // (2+4) + 2 + 4 = 12
+        assert_eq!(result, vec![8.0, 12.0]);
+    }
+
+    #[test]
+    fn test_add_with_zeros_constructor() {
+        let a: Tensor = Tensor::new(vec![5.0, 10.0, 15.0], vec![3], Device::CPU).unwrap();
+        let b: Tensor = Tensor::zeros(vec![3], Device::CPU).unwrap();
+        
+        let c: Tensor = a + b;
+        
+        let result: Vec<f32> = c.to_cpu().unwrap();
+        assert_eq!(result, vec![5.0, 10.0, 15.0]);
+    }
+
+    #[test]
+    fn test_add_with_ones_constructor() {
+        let a: Tensor = Tensor::ones(vec![3], Device::CPU).unwrap();
+        let b: Tensor = Tensor::ones(vec![3], Device::CPU).unwrap();
+        
+        let c: Tensor = a + b;
+        
+        let result: Vec<f32> = c.to_cpu().unwrap();
+        assert_eq!(result, vec![2.0, 2.0, 2.0]);
+    }
+
+    #[test]
+    fn test_add_operator_simple() {
+        let a: Tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![4], Device::CPU).unwrap();
+        let b: Tensor = Tensor::new(vec![10.0, 20.0, 30.0, 40.0], vec![4], Device::CPU).unwrap();
+        
+        let c: Tensor = a + b;
+        
+        let result: Vec<f32> = c.to_cpu().unwrap();
+        assert_eq!(result, vec![11.0, 22.0, 33.0, 44.0]);
+    }
+
+    #[test]
+    fn test_add_operator_2d() {
+        let a: Tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2], Device::CPU).unwrap();
+        let b: Tensor = Tensor::new(vec![5.0, 6.0, 7.0, 8.0], vec![2, 2], Device::CPU).unwrap();
+        
+        let c: Tensor = a + b;
+        
+        let result: Vec<f32> = c.to_cpu().unwrap();
+        assert_eq!(result, vec![6.0, 8.0, 10.0, 12.0]);
+    }
+
+    #[test]
+    fn test_add_consumes_operands() {
+        let a: Tensor = Tensor::new(vec![1.0, 2.0], vec![2], Device::CPU).unwrap();
+        let b: Tensor = Tensor::new(vec![3.0, 4.0], vec![2], Device::CPU).unwrap();
+        
+        let c: Tensor = a + b;
+        
+        assert_eq!(c.to_cpu().unwrap(), vec![4.0, 6.0]);
     }
 }

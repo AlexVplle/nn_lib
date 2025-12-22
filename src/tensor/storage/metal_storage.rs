@@ -3,6 +3,8 @@ use crate::{
     tensor::{storage::storage::StorageBackend, Device},
 };
 
+use std::any::Any;
+
 #[derive(PartialEq, Debug, Clone, Default, PartialOrd)]
 pub struct MetalStorage {
     device_id: usize,
@@ -48,5 +50,13 @@ impl StorageBackend for MetalStorage {
         Err(NeuralNetworkError::NotImplemented(
             "Metal not yet implemented",
         ))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
