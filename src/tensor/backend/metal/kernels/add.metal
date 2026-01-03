@@ -1,0 +1,11 @@
+#include <metal_stdlib>
+using namespace metal;
+
+kernel void add(
+  device const float* lhs [[buffer(0)]],
+  device const float* hhs [[buffer(1)]],
+  device float* output [[buffer(1)]],
+  uint id [[thread_position_in_grid]]
+) {
+  output[id] = lhs[id] + rhs[id];
+}

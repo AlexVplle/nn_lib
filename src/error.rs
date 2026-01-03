@@ -50,8 +50,32 @@ pub enum NeuralNetworkError {
     #[error("CUDA error: {0}")]
     CudaError(String),
 
-    #[error("Metal error: {0}")]
-    MetalError(String),
+    #[error("Metal device not found")]
+    MetalDeviceNotFound,
+
+    #[error("Metal command queue creation failed")]
+    MetalCommandQueueCreationFailed,
+
+    #[error("Metal compilation error: {0}")]
+    MetalCompilationError(String),
+
+    #[error("Metal function not found: {0}")]
+    MetalFunctionNotFound(String),
+
+    #[error("Metal pipeline error: {0}")]
+    MetalPipelineError(String),
+
+    #[error("Metal buffer creation failed")]
+    MetalBufferCreationFailed,
+
+    #[error("Metal command buffer creation failed")]
+    MetalCommandBufferCreationFailed,
+
+    #[error("Metal encoder creation failed")]
+    MetalEncoderCreationFailed,
+
+    #[error("Null pointer")]
+    NullPointer,
 
     #[error("Feature not yet implemented: {0}")]
     NotImplemented(&'static str),
