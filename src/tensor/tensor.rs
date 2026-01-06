@@ -6,8 +6,8 @@ use std::{
 use crate::{
     error::NeuralNetworkError,
     tensor::{
-        backend::Backend,
-        storage::{cpu_storage::CpuStorage, storage::StorageBackend},
+        backend::{cpu::CpuStorage, Backend},
+        storage::StorageBackend,
         Device, Layout,
     },
 };
@@ -46,7 +46,6 @@ impl Tensor {
 
         let storage: Box<dyn StorageBackend> = match device {
             Device::CPU => Box::new(CpuStorage::from_vec(data)),
-            Device::CUDA(_id) => todo!(),
             Device::Metal(_id) => todo!(),
         };
 
@@ -63,7 +62,6 @@ impl Tensor {
         let size: usize = shape.iter().product();
         let storage: Box<dyn StorageBackend> = match device {
             Device::CPU => Box::new(CpuStorage::new(size)),
-            Device::CUDA(_id) => todo!(),
             Device::Metal(_id) => todo!(),
         };
 
@@ -80,7 +78,6 @@ impl Tensor {
         let size: usize = shape.iter().product();
         let storage: Box<dyn StorageBackend> = match device {
             Device::CPU => Box::new(CpuStorage::filled(size, 1.0)),
-            Device::CUDA(_id) => todo!(),
             Device::Metal(_id) => todo!(),
         };
 
@@ -774,4 +771,3 @@ mod tests {
         assert!(!c.require_gradient);
     }
 }
-

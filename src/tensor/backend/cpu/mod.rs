@@ -1,11 +1,11 @@
 use std::sync::{Arc, RwLock};
 
 use crate::error::NeuralNetworkError;
-use crate::tensor::{
-    backend::Backend,
-    storage::{cpu_storage::CpuStorage, storage::StorageBackend},
-    Device,
-};
+use crate::tensor::storage::StorageBackend;
+use crate::tensor::{backend::Backend, Device};
+
+pub mod storage;
+pub use storage::CpuStorage;
 
 pub struct CpuBackend;
 
@@ -401,4 +401,3 @@ mod tests {
         assert!((result_data[2] - 1.0).abs() < epsilon);
     }
 }
-

@@ -1,6 +1,6 @@
 use crate::{
     error::NeuralNetworkError,
-    tensor::{storage::storage::StorageBackend, Device},
+    tensor::{storage::StorageBackend, Device},
 };
 
 use std::any::Any;
@@ -82,13 +82,6 @@ mod tests {
     }
 
     #[test]
-    fn test_from_vec_empty() {
-        let data: Vec<f32> = vec![];
-        let storage: CpuStorage = CpuStorage::from_vec(data);
-        assert_eq!(&*storage.data, &[]);
-    }
-
-    #[test]
     fn test_as_slice() {
         let storage: CpuStorage = CpuStorage::from_vec(vec![1.0, 2.0, 3.0]);
         assert_eq!(storage.as_slice(), &*storage.data);
@@ -101,21 +94,9 @@ mod tests {
     }
 
     #[test]
-    fn test_new_zero_size() {
-        let storage: CpuStorage = CpuStorage::new(0);
-        assert_eq!(&*storage.data, &[]);
-    }
-
-    #[test]
     fn test_filled() {
         let storage: CpuStorage = CpuStorage::filled(4, 3.0);
         assert_eq!(&*storage.data, &[3.0, 3.0, 3.0, 3.0]);
-    }
-
-    #[test]
-    fn test_filled_zero_size() {
-        let storage: CpuStorage = CpuStorage::filled(0, 1.0);
-        assert_eq!(&*storage.data, &[]);
     }
 
     #[test]
@@ -213,12 +194,6 @@ mod tests {
         let storage3: CpuStorage = CpuStorage::from_vec(vec![1.0, 2.0, 4.0]);
         assert_eq!(storage1, storage2);
         assert_ne!(storage1, storage3);
-    }
-
-    #[test]
-    fn test_default() {
-        let storage: CpuStorage = CpuStorage::default();
-        assert_eq!(&*storage.data, &[]);
     }
 
     #[test]

@@ -4,7 +4,7 @@ use objc2_metal::{MTLBuffer, MTLCreateSystemDefaultDevice, MTLDevice, MTLResourc
 
 use crate::{
     error::NeuralNetworkError,
-    tensor::{storage::storage::StorageBackend, Device},
+    tensor::{storage::StorageBackend, Device},
 };
 
 use std::{any::Any, ptr::NonNull};
@@ -18,12 +18,14 @@ pub struct MetalStorage {
 
 impl MetalStorage {
     pub fn new(device_id: usize, size: usize) -> Result<Self, NeuralNetworkError> {
-        let device =
-            MTLCreateSystemDefaultDevice().ok_or(NeuralNetworkError::MetalDeviceNotFound)?;
+        if size == 0 {
+            return Err(NeuralNetworkError::EmptyTensorNotAllowed);
+        }
+        let device = MTLCreateSystemDefaultDevice().ok_or(NeuralNetworkError::AllocationFailed("Metal device not found".to_string()))?;
         let byte_size = (size * std::mem::size_of::<f32>()) as NSUInteger;
         let buffer = device
             .newBufferWithLength_options(byte_size, MTLResourceOptions::StorageModeShared)
-            .ok_or(NeuralNetworkError::MetalBufferCreationFailed)?;
+            .ok_or(NeuralNetworkError::AllocationFailed("Metal buffer creation failed".to_string()))?;
         Ok(Self {
             buffer,
             device_id,
@@ -32,12 +34,15 @@ impl MetalStorage {
     }
 
     pub fn from_vec(device_id: usize, data: Vec<f32>) -> Result<Self, NeuralNetworkError> {
-        let device =
-            MTLCreateSystemDefaultDevice().ok_or(NeuralNetworkError::MetalDeviceNotFound)?;
         let len = data.len();
+        if len == 0 {
+            return Err(NeuralNetworkError::EmptyTensorNotAllowed);
+        }
+        let device =
+            MTLCreateSystemDefaultDevice().ok_or(NeuralNetworkError::AllocationFailed("Metal device not found".to_string()))?;
         let byte_size = (len * std::mem::size_of::<f32>()) as NSUInteger;
         let ptr = NonNull::new(data.as_ptr() as *mut std::ffi::c_void)
-            .ok_or(NeuralNetworkError::NullPointer)?;
+            .ok_or(NeuralNetworkError::AllocationFailed("Null pointer".to_string()))?;
         let buffer = unsafe {
             device.newBufferWithBytes_length_options(
                 ptr,
@@ -45,7 +50,7 @@ impl MetalStorage {
                 MTLResourceOptions::StorageModeShared,
             )
         }
-        .ok_or(NeuralNetworkError::MetalBufferCreationFailed)?;
+        .ok_or(NeuralNetworkError::AllocationFailed("Metal buffer creation failed".to_string()))?;
         Ok(Self {
             buffer,
             device_id,
@@ -54,6 +59,9 @@ impl MetalStorage {
     }
 
     pub fn filled(device_id: usize, size: usize, value: f32) -> Result<Self, NeuralNetworkError> {
+        if size == 0 {
+            return Err(NeuralNetworkError::EmptyTensorNotAllowed);
+        }
         let data: Vec<f32> = vec![value; size];
         Self::from_vec(device_id, data)
     }
@@ -74,7 +82,8 @@ impl StorageBackend for MetalStorage {
 
     fn try_clone(&self) -> Result<Box<dyn StorageBackend>, NeuralNetworkError> {
         let data = self.to_cpu()?;
-        Ok(Box::new(Self::from_vec(self.device_id, data)?))
+        let storage = Self::from_vec(self.device_id, data)?;
+        Ok(Box::new(storage))
     }
 
     fn to_cpu(&self) -> Result<Vec<f32>, NeuralNetworkError> {
@@ -95,6 +104,8 @@ impl StorageBackend for MetalStorage {
 
 #[cfg(test)]
 mod tests {
+    use std::f32;
+
     use super::*;
 
     #[test]
@@ -154,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_metal_storage_from_vec_floats() {
-        let data = vec![1.5, 2.7, 3.14159, 0.5];
+        let data = vec![1.5, 2.7, f32::consts::PI, 0.5];
         let storage = MetalStorage::from_vec(0, data.clone()).unwrap();
 
         let result = storage.to_cpu().unwrap();
@@ -186,8 +197,6 @@ mod tests {
     fn test_metal_storage_to_cpu_multiple_times() {
         let data = vec![10.0, 20.0, 30.0];
         let storage = MetalStorage::from_vec(0, data.clone()).unwrap();
-
-        // Appeler to_cpu plusieurs fois devrait donner le même résultat
         assert_eq!(storage.to_cpu().unwrap(), data);
         assert_eq!(storage.to_cpu().unwrap(), data);
         assert_eq!(storage.to_cpu().unwrap(), data);
@@ -211,10 +220,8 @@ mod tests {
 
         let cloned = storage.try_clone().unwrap();
 
-        // Les deux storages doivent avoir les mêmes données
         assert_eq!(storage.to_cpu().unwrap(), cloned.to_cpu().unwrap());
 
-        // Mais être indépendants (différents buffers Metal)
         assert_eq!(cloned.len(), 3);
     }
 
@@ -258,7 +265,6 @@ mod tests {
         let storage = MetalStorage::new(0, 100).unwrap();
         let _buffer = storage.buffer();
 
-        // Vérifie juste que buffer() ne panic pas
         assert!(true);
     }
 
@@ -309,17 +315,8 @@ mod tests {
     }
 
     #[test]
-    fn test_metal_storage_empty_vec() {
-        let data: Vec<f32> = vec![];
-        let storage = MetalStorage::from_vec(0, data.clone()).unwrap();
-
-        assert_eq!(storage.len(), 0);
-        assert_eq!(storage.to_cpu().unwrap(), vec![]);
-    }
-
-    #[test]
     fn test_metal_storage_performance_large_buffer() {
-        let size = 10_000_000; // 10M éléments
+        let size = 10_000_000;
         let data: Vec<f32> = vec![1.0; size];
 
         let start = std::time::Instant::now();

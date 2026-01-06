@@ -1,4 +1,4 @@
-mod cpu;
+pub mod cpu;
 mod metal;
 
 pub use cpu::CpuBackend;
@@ -6,7 +6,7 @@ pub use cpu::CpuBackend;
 use std::sync::{Arc, RwLock};
 
 use crate::error::NeuralNetworkError;
-use crate::tensor::{storage::storage::StorageBackend, Device};
+use crate::tensor::{storage::StorageBackend, Device};
 
 pub trait Backend: Send + Sync {
     fn add(

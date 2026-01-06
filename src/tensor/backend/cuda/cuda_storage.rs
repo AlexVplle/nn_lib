@@ -37,7 +37,7 @@ impl StorageBackend for CudaStorage {
     }
 
     fn device(&self) -> Device {
-        Device::CUDA(self.device_id)
+        todo!()
     }
 
     fn try_clone(&self) -> Result<Box<dyn StorageBackend>, NeuralNetworkError> {
