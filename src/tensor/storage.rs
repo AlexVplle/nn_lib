@@ -1,15 +1,18 @@
-use crate::{error::NeuralNetworkError, tensor::Device};
-use std::any::Any;
+use crate::error::NeuralNetworkError;
+use crate::tensor::backend::cpu::CpuStorage;
+use crate::tensor::backend::metal::storage::MetalStorage;
+use crate::tensor::Layout;
 
-pub trait StorageBackend {
-    fn len(&self) -> usize;
-    fn device(&self) -> Device;
-    fn try_clone(&self) -> Result<Box<dyn StorageBackend>, NeuralNetworkError>;
-    fn to_cpu(&self) -> Result<Vec<f32>, NeuralNetworkError>;
-    fn is_empty(&self) -> bool {
-        self.len() == 0
+pub enum Storage {
+    Cpu(CpuStorage),
+    Metal(MetalStorage),
+}
+
+impl Storage {
+    pub fn try_clone(&self, layout: &Layout) -> Result<Self, NeuralNetworkError> {
+        match self {
+            Self::Cpu(storage) => Ok(Self::Cpu(storage.clone())),
+            Self::Metal(storage) => Ok(Self::Metal(storage.clone())),
+        }
     }
-        
-    fn as_any(&self) -> &dyn Any;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
 }

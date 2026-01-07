@@ -1,7 +1,7 @@
 use ndarray::ShapeError;
 use thiserror::Error;
 
-use crate::tensor::Device;
+// use crate::tensor::Device;
 
 #[derive(Debug, Error)]
 pub enum NeuralNetworkError {
@@ -47,9 +47,8 @@ pub enum NeuralNetworkError {
     #[error("Memory allocation failed: {0}")]
     AllocationFailed(String),
 
-    #[error("Device mismatch: expected {expected:?}, got {got:?}")]
-    DeviceMismatch { expected: Device, got: Device },
-
+    // #[error("Device mismatch: expected {expected:?}, got {got:?}")]
+    // DeviceMismatch { expected: Device, got: Device },
     #[error("CUDA error: {0}")]
     CudaError(String),
 

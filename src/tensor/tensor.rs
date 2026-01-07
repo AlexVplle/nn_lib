@@ -5,17 +5,13 @@ use std::{
 
 use crate::{
     error::NeuralNetworkError,
-    tensor::{
-        backend::{cpu::CpuStorage, Backend},
-        storage::StorageBackend,
-        Device, Layout,
-    },
+    tensor::{backend::cpu::CpuStorage, storage::Storage, Layout},
 };
 
 pub struct Tensor_ {
-    storage: Arc<RwLock<Box<dyn StorageBackend>>>,
+    storage: Arc<RwLock<Box<Storage>>>,
     layout: Layout,
-    device: Device,
+    // device: Device,
     gradient: Option<Tensor>,
     require_gradient: bool,
 }
@@ -34,7 +30,7 @@ impl Tensor {
     pub fn new(
         data: Vec<f32>,
         shape: Vec<usize>,
-        device: Device,
+        // device: Device,
     ) -> Result<Self, NeuralNetworkError> {
         let size: usize = shape.iter().product();
         if data.len() != size {
@@ -44,10 +40,10 @@ impl Tensor {
             });
         }
 
-        let storage: Box<dyn StorageBackend> = match device {
-            Device::CPU => Box::new(CpuStorage::from_vec(data)),
-            Device::Metal(_id) => todo!(),
-        };
+        // let storage: Box<dyn StorageBackend> = match device {
+        //     Device::CPU => Box::new(CpuStorage::from_vec(data)),
+        //     Device::Metal() => todo!(),
+        // };
 
         Ok(Tensor(Arc::new(Tensor_ {
             storage: Arc::new(RwLock::new(storage)),
