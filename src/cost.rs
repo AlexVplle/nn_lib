@@ -1,3 +1,5 @@
+use crate::error::NeuralNetworkError;
+use crate::tensor::Tensor;
 use ndarray::{ArrayD, Axis};
 
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Debug, Default)]
@@ -23,16 +25,25 @@ impl CostFunction {
         }
     }
 
-    /// Compute the mean cost of the neural network with respect to a batch `output` and `observed`
+    /// Compute the mean cost of the neural network with respect to a batch output and observed values
+    ///
     /// # Arguments
-    /// * `output` - a batch matrices (shape (n, j)) of output of the network
-    /// * `observed` - a one hotted encoded vector of observed values
-    pub fn cost(&self, output: &ArrayD<f64>, observed: &ArrayD<f64>) -> f64 {
+    /// * `output` - Network output tensor, shape: [batch_size, n_classes]
+    /// * `observed` - One-hot encoded labels tensor, shape: [batch_size, n_classes]
+    ///
+    /// # Returns
+    /// * `Result<f64, NeuralNetworkError>` - Mean cost over the batch
+    pub fn cost(&self, output: &Tensor, observed: &Tensor) -> Result<f64, NeuralNetworkError> {
+        // Convert tensors to ArrayD for computation
+        let output_arr: ArrayD<f64> = output.clone().into();
+        let observed_arr: ArrayD<f64> = observed.clone().into();
+
         let epsilon = 1e-7;
-        let clipped_output = output.mapv(|x| x.clamp(epsilon, 1.0 - epsilon));
-        match self {
+        let clipped_output = output_arr.mapv(|x| x.clamp(epsilon, 1.0 - epsilon));
+
+        let result = match self {
             Self::CrossEntropy => {
-                observed
+                observed_arr
                     .axis_iter(Axis(0))
                     .enumerate()
                     .map(|(i, observed_row)| {
@@ -40,43 +51,58 @@ impl CostFunction {
                         -f64::ln(clipped_output[[i, correct_class]])
                     })
                     .sum::<f64>()
-                    / output.shape()[0] as f64
+                    / output_arr.shape()[0] as f64
             }
             Self::BinaryCrossEntropy => {
-                let losses = observed * &clipped_output.mapv(f64::ln)
-                    + &(1.0 - observed) * &((1.0 - clipped_output).mapv(f64::ln));
+                let losses = &observed_arr * &clipped_output.mapv(f64::ln)
+                    + &(1.0 - &observed_arr) * &((1.0 - &clipped_output).mapv(f64::ln));
                 -losses.mean().unwrap()
             }
             Self::Mse => {
-                let diff = output - observed;
+                let diff = &output_arr - &observed_arr;
                 diff.mapv(|x| x.powi(2)).mean().unwrap()
             }
-        }
+        };
+
+        Ok(result)
     }
 
-    /// Return the gradient of cost function with respect to `output`
+    /// Return the gradient of cost function with respect to output
+    ///
     /// Note that this simple, from 'almost' scratch library don't use auto-differentiation
-    /// thus `BinaryCrossEntropy` calculation assume a Sigmoid activation as the layer.
-    /// `CrossEntropy` calculation assume a Softmax activation as the last
-    /// layer
+    /// thus `BinaryCrossEntropy` calculation assume a Sigmoid activation as the last layer.
+    /// `CrossEntropy` calculation assume a Softmax activation as the last layer.
+    ///
     /// # Arguments
-    /// * `output` - a batch matrices of neural network output (shape (n, j))
-    /// * `observed` - a batch matrices of observed values (shape (n, j))
+    /// * `output` - Network output tensor, shape: [batch_size, n_classes]
+    /// * `observed` - One-hot encoded labels tensor, shape: [batch_size, n_classes]
+    ///
+    /// # Returns
+    /// * `Result<Tensor, NeuralNetworkError>` - Gradient tensor, same shape as input
     ///
     /// Note that CrossEntropy and BinaryCrossEntropy assume one hot encoded vector for the
-    /// observed vector if the is multi-class.
+    /// observed values in multi-class classification.
     pub fn cost_output_gradient(
         &self,
-        output: &ArrayD<f64>,
-        observed: &ArrayD<f64>,
-    ) -> ArrayD<f64> {
-        match self {
-            Self::CrossEntropy => output - observed,
-            Self::BinaryCrossEntropy => output - observed,
+        output: &Tensor,
+        observed: &Tensor,
+    ) -> Result<Tensor, NeuralNetworkError> {
+        // Convert tensors to ArrayD for computation
+        let output_arr: ArrayD<f64> = output.clone().into();
+        let observed_arr: ArrayD<f64> = observed.clone().into();
+
+        let gradient_arr = match self {
+            Self::CrossEntropy => &output_arr - &observed_arr,
+            Self::BinaryCrossEntropy => &output_arr - &observed_arr,
             Self::Mse => {
-                let batch_size = output.shape()[0];
-                2f64 * (output - observed) / batch_size as f64
+                let batch_size = output_arr.shape()[0];
+                2.0 * (&output_arr - &observed_arr) / batch_size as f64
             }
-        }
+        };
+
+        // Convert gradient back to Tensor on the correct device
+        let data: Vec<f32> = gradient_arr.iter().map(|&x| x as f32).collect();
+        let shape = gradient_arr.shape().to_vec();
+        Ok(Tensor::new(data, shape, output.device().clone())?)
     }
 }

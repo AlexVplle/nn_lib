@@ -1,11 +1,13 @@
 use std::sync::{Condvar, Mutex, MutexGuard};
 
+#[derive(Debug)]
 pub enum CommandStatus {
     Available,
     Encoding,
     Done,
 }
 
+#[derive(Debug)]
 pub struct CommandSemaphore {
     pub cond: Condvar,
     pub status: Mutex<CommandStatus>,

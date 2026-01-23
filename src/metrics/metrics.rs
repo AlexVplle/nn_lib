@@ -1,3 +1,5 @@
+use crate::error::NeuralNetworkError;
+use crate::tensor::Tensor;
 use ndarray::ArrayD;
 
 use super::{MulticlassClassifierMetrics, MulticlassMetricType};
@@ -12,7 +14,29 @@ impl Metrics {
         Metrics::MulticlassClassification(MulticlassClassifierMetrics::from(metric_types))
     }
 
-    pub fn accumulate(&mut self, predictions: &ArrayD<f64>, observed: &ArrayD<f64>) {
+    /// Accumulate metrics from tensor predictions and labels
+    ///
+    /// # Arguments
+    /// * `predictions` - Model predictions tensor, shape: [batch_size, n_classes]
+    /// * `observed` - One-hot encoded labels tensor, shape: [batch_size, n_classes]
+    pub fn accumulate(
+        &mut self,
+        predictions: &Tensor,
+        observed: &Tensor,
+    ) -> Result<(), NeuralNetworkError> {
+        // Transfer to CPU if needed for metrics calculation
+        use crate::tensor::Device;
+        let pred_cpu = predictions.to_device(Device::CPU)?;
+        let obs_cpu = observed.to_device(Device::CPU)?;
+
+        let pred_arr: ArrayD<f64> = pred_cpu.into();
+        let obs_arr: ArrayD<f64> = obs_cpu.into();
+        self.accumulate_internal(&pred_arr, &obs_arr);
+        Ok(())
+    }
+
+    // Internal method for ArrayD-based accumulation
+    fn accumulate_internal(&mut self, predictions: &ArrayD<f64>, observed: &ArrayD<f64>) {
         match self {
             Metrics::MulticlassClassification(metrics) => metrics.accumulate(predictions, observed),
         }

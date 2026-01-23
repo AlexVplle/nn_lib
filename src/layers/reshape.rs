@@ -1,14 +1,14 @@
-use ndarray::{ArrayD, Dimension, IxDyn, ShapeError};
 use std::any::Any;
 
 use crate::error::NeuralNetworkError;
+use crate::tensor::Tensor;
 use super::Layer;
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone)]
 pub struct ReshapeLayer {
-    input: Option<ArrayD<f64>>,
-    input_shape: IxDyn,
-    output_shape: IxDyn,
+    input: Option<Tensor>,
+    input_shape: Vec<usize>,
+    output_shape: Vec<usize>,
 }
 
 impl ReshapeLayer {
@@ -16,52 +16,50 @@ impl ReshapeLayer {
         let input_elements: usize = input_shape.iter().product();
         let output_elements: usize = output_shape.iter().product();
         if input_elements != output_elements {
-            return Err(NeuralNetworkError::ReshapeError(ShapeError::from_kind(
-                ndarray::ErrorKind::IncompatibleShape,
-            )));
+            return Err(NeuralNetworkError::TensorError(
+                crate::tensor::TensorError::IncompatibleShape {
+                    shape_given: output_shape.to_vec(),
+                    tensor_shape: input_shape.to_vec(),
+                },
+            ));
         }
         Ok(Self {
             input: None,
-            input_shape: IxDyn(input_shape),
-            output_shape: IxDyn(output_shape),
+            input_shape: input_shape.to_vec(),
+            output_shape: output_shape.to_vec(),
         })
     }
 }
 
 impl Layer for ReshapeLayer {
-    fn feed_forward_save(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
+    fn feed_forward_save(&mut self, input: &Tensor) -> Result<Tensor, NeuralNetworkError> {
         self.input = Some(input.clone());
         self.feed_forward(input)
     }
 
-    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
+    fn feed_forward(&self, input: &Tensor) -> Result<Tensor, NeuralNetworkError> {
         let batch_size: usize = input.shape()[0];
-        let mut shape: Vec<usize> = Vec::with_capacity(self.output_shape.ndim() + 1);
+        let mut shape: Vec<usize> = Vec::with_capacity(self.output_shape.len() + 1);
         shape.push(batch_size);
-        shape.extend_from_slice(self.output_shape.as_array_view().as_slice().unwrap());
+        shape.extend_from_slice(&self.output_shape);
 
-        if input.shape().iter().product::<usize>() != shape.iter().product() {
-            return Err(NeuralNetworkError::ReshapeError(ShapeError::from_kind(
-                ndarray::ErrorKind::IncompatibleShape,
-            )));
-        }
-        Ok(input.clone().into_shape(shape).unwrap())
+        let data = input.to_vec()?;
+        let device = input.device().clone();
+        Ok(Tensor::new(data, shape, device)?)
     }
 
     fn propagate_backward(
         &mut self,
-        output_gradient: &ArrayD<f64>,
-    ) -> Result<ArrayD<f64>, NeuralNetworkError> {
+        output_gradient: &Tensor,
+    ) -> Result<Tensor, NeuralNetworkError> {
         let batch_size: usize = output_gradient.shape()[0];
-        let mut shape: Vec<usize> = Vec::with_capacity(self.output_shape.ndim() + 1);
+        let mut shape: Vec<usize> = Vec::with_capacity(self.input_shape.len() + 1);
         shape.push(batch_size);
-        shape.extend_from_slice(self.input_shape.as_array_view().as_slice().unwrap());
-        if output_gradient.shape().iter().product::<usize>() != shape.iter().product() {
-            return Err(NeuralNetworkError::ReshapeError(ShapeError::from_kind(
-                ndarray::ErrorKind::IncompatibleShape,
-            )));
-        }
-        Ok(output_gradient.clone().into_shape(shape).unwrap())
+        shape.extend_from_slice(&self.input_shape);
+
+        let data = output_gradient.to_vec()?;
+        let device = output_gradient.device().clone();
+        Ok(Tensor::new(data, shape, device)?)
     }
 
     fn as_any(&self) -> &dyn Any {

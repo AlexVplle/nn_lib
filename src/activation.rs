@@ -1,5 +1,8 @@
 use log::error;
-use ndarray::{Array1, ArrayD, ArrayView1, Axis};
+use ndarray::ArrayD;
+
+use crate::error::NeuralNetworkError;
+use crate::tensor::Tensor;
 
 fn check_nan(array: &ArrayD<f64>, operation: &str) {
     if array.iter().any(|&x| x.is_nan()) {
@@ -17,52 +20,49 @@ pub enum Activation {
 }
 
 impl Activation {
-    /// Apply the activation function to each element of a multidimensional array
-    /// dimensions doesn't matter as the transformation is applied element wise
-    /// except for the softmax function, the softmax will be computed onto each batch independently
-    /// if the array is of shape (n, i) with **n** the number of batch and **i** the size of the
-    /// vector, the function will return a matrices of same shape, with softmax function computed
-    /// for every element in the outermost dimension.
-    /// # Arguments
-    /// * `input` - a multidimensional array;
-    pub fn apply(&self, input: &ArrayD<f64>) -> ArrayD<f64> {
-        let result = match self {
-            Self::ReLU => input.mapv(|e| 0f64.max(e)),
-            Self::Tanh => input.mapv(|e| e.tanh()),
-            Self::Sigmoid => input.mapv(|e| 1.0 / (1.0 + f64::exp(-e))),
-            Self::Softmax => {
-                let mut result = input.clone();
-                for mut row in result.axis_iter_mut(Axis(0)) {
-                    let row_as_view1: ArrayView1<f64> = row.view().into_dimensionality().unwrap();
-                    let max_logit = row_as_view1.fold(f64::NEG_INFINITY, |max, &val| max.max(val));
-                    let exps: Array1<f64> =
-                        row_as_view1.mapv(|x| f64::exp(x - max_logit)).to_owned();
-                    let sum_exps: f64 = exps.sum() + 1e-10; // to avoid division by zero
-                    let softmax_row: Array1<f64> = exps.mapv(|x| x / sum_exps);
-                    row.assign(&softmax_row);
-                }
-                result
-            }
-        };
-        check_nan(&result, &format!("{:?}", self));
-        result
-    }
-
     /// Apply the activation function derivative to each element of a multidimensional array
-    /// not that the dimensions doesn't matter as the transformation is applied element wise.
+    /// used for backpropagation via ArrayD (temporary until autograd is implemented)
     /// # Arguments
     /// * `input` - a multidimensional array;
-    pub fn apply_derivative(&self, input: &ArrayD<f64>) -> ArrayD<f64> {
+    fn apply_derivative(&self, input: &ArrayD<f64>) -> ArrayD<f64> {
         let result = match self {
             Self::ReLU => input.mapv(|e| if e > 0f64 { 1f64 } else { 0f64 }),
             Self::Tanh => input.mapv(|e| 1f64 - e.tanh().powi(2)),
-            Self::Sigmoid => {
-                let sigmoid_output = self.apply(input);
-                &sigmoid_output * &(1.0 - &sigmoid_output)
-            }
+            Self::Sigmoid => input.mapv(|e| {
+                let sig = 1.0 / (1.0 + f64::exp(-e));
+                sig * (1.0 - sig)
+            }),
             Self::Softmax => unimplemented!("We don't use the softmax jacobian matrix in practice"),
         };
-        check_nan(&result, &format!("{:?}", self));
+        check_nan(&result, &format!("{:?}_derivative", self));
         result
+    }
+
+    pub fn apply_tensor(&self, input: &Tensor) -> Result<Tensor, NeuralNetworkError> {
+        match self {
+            Self::ReLU => Ok(input.relu()?),
+            Self::Tanh => Ok(input.tanh()?),
+            Self::Sigmoid => Ok(input.sigmoid()?),
+            Self::Softmax => Ok(input.softmax()?),
+        }
+    }
+
+    pub fn apply_derivative_tensor(&self, input: &Tensor) -> Result<Tensor, NeuralNetworkError> {
+        let data = input.to_vec()?;
+        let shape = input.shape().to_vec();
+        let device = input.device().clone();
+
+        let array = ArrayD::from_shape_vec(shape.clone(), data.iter().map(|&x| x as f64).collect())
+            .map_err(|_e| {
+                NeuralNetworkError::TensorError(crate::tensor::TensorError::IncompatibleShape {
+                    shape_given: shape.clone(),
+                    tensor_shape: vec![data.len()],
+                })
+            })?;
+
+        let result_array = self.apply_derivative(&array);
+        let result_data: Vec<f32> = result_array.iter().map(|&x| x as f32).collect();
+
+        Ok(Tensor::new(result_data, shape, device)?)
     }
 }

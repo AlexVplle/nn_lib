@@ -2,9 +2,8 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::NSString;
 use objc2_metal::MTLLibrary;
 
-use crate::{
-    error::NeuralNetworkError,
-    tensor::backend::metal::{constant_values::ConstantValues, function::Function, value::Value},
+use crate::tensor::backend::metal::{
+    constant_values::ConstantValues, error::MetalError, function::Function,
 };
 
 #[derive(Eq, PartialEq, Debug, Clone, Hash)]
@@ -24,7 +23,7 @@ impl Library {
         &self,
         name: &str,
         constant_values: Option<&ConstantValues>,
-    ) -> Result<Function, NeuralNetworkError> {
+    ) -> Result<Function, MetalError> {
         let function = match constant_values {
             Some(constant_values) => self
                 .raw
@@ -32,11 +31,11 @@ impl Library {
                     &NSString::from_str(name),
                     &constant_values.function_constant_values().raw,
                 )
-                .map_err(|error| NeuralNetworkError::AllocationFailed(error.to_string()))?,
+                .map_err(|error| MetalError::LibraryCompilationError(error.to_string()))?,
             None => self
                 .raw
                 .newFunctionWithName(&NSString::from_str(name))
-                .ok_or(NeuralNetworkError::AllocationFailed(name.to_string()))?,
+                .ok_or(MetalError::FunctionNotFound(name.to_string()))?,
         };
         Ok(Function::new(function))
     }

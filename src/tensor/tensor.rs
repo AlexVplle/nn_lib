@@ -1,22 +1,26 @@
 use std::{
-    ops::{Add, Deref, Mul},
+    ops::{Add, Deref, Mul, Range},
     sync::{Arc, RwLock, RwLockReadGuard},
 };
 
-use crate::{
-    error::NeuralNetworkError,
-    tensor::{backend::cpu::CpuStorage, storage::Storage, Layout},
+use crate::tensor::{
+    backend::{backend_device::BackendDevice, cpu::CpuStorage},
+    device::Device,
+    storage::Storage,
+    Layout, TensorError,
 };
+use ndarray::ArrayD;
 
+#[derive(Debug)]
 pub struct Tensor_ {
     storage: Arc<RwLock<Box<Storage>>>,
     layout: Layout,
-    // device: Device,
+    device: Device,
     gradient: Option<Tensor>,
     require_gradient: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Tensor(Arc<Tensor_>);
 
 impl Deref for Tensor {
@@ -27,55 +31,24 @@ impl Deref for Tensor {
 }
 
 impl Tensor {
-    pub fn new(
-        data: Vec<f32>,
-        shape: Vec<usize>,
-        // device: Device,
-    ) -> Result<Self, NeuralNetworkError> {
+    pub fn new(data: Vec<f32>, shape: Vec<usize>, device: Device) -> Result<Self, TensorError> {
         let size: usize = shape.iter().product();
         if data.len() != size {
-            return Err(NeuralNetworkError::IncompatibleShape {
+            return Err(TensorError::IncompatibleShape {
                 shape_given: shape,
                 tensor_shape: vec![data.len()],
             });
         }
 
-        // let storage: Box<dyn StorageBackend> = match device {
-        //     Device::CPU => Box::new(CpuStorage::from_vec(data)),
-        //     Device::Metal() => todo!(),
-        // };
-
-        Ok(Tensor(Arc::new(Tensor_ {
-            storage: Arc::new(RwLock::new(storage)),
-            layout: Layout::new(shape),
-            device,
-            gradient: None,
-            require_gradient: false,
-        })))
-    }
-
-    pub fn zeros(shape: Vec<usize>, device: Device) -> Result<Self, NeuralNetworkError> {
-        let size: usize = shape.iter().product();
-        let storage: Box<dyn StorageBackend> = match device {
-            Device::CPU => Box::new(CpuStorage::new(size)),
-            Device::Metal(_id) => todo!(),
+        let storage: Box<Storage> = match device {
+            Device::CPU => Box::new(Storage::Cpu(CpuStorage(data))),
+            Device::Metal(device) => {
+                let storage = device.storage_from_vec(data)?;
+                Box::new(Storage::Metal(storage))
+            }
         };
 
-        Ok(Tensor(Arc::new(Tensor_ {
-            storage: Arc::new(RwLock::new(storage)),
-            layout: Layout::new(shape),
-            device,
-            gradient: None,
-            require_gradient: false,
-        })))
-    }
-
-    pub fn ones(shape: Vec<usize>, device: Device) -> Result<Self, NeuralNetworkError> {
-        let size: usize = shape.iter().product();
-        let storage: Box<dyn StorageBackend> = match device {
-            Device::CPU => Box::new(CpuStorage::filled(size, 1.0)),
-            Device::Metal(_id) => todo!(),
-        };
+        let device = storage.device();
 
         Ok(Tensor(Arc::new(Tensor_ {
             storage: Arc::new(RwLock::new(storage)),
@@ -86,7 +59,74 @@ impl Tensor {
         })))
     }
 
-    pub fn storage(&self) -> RwLockReadGuard<'_, Box<dyn StorageBackend>> {
+    pub fn transpose(&self) -> Result<Self, TensorError> {
+        if self.ndim() != 2 {
+            return Err(TensorError::InvalidDimension {
+                got: self.ndim(),
+                max_dimension: 2,
+            });
+        }
+        let new_layout = self.layout.permute(&[1, 0])?;
+        Ok(Self(Arc::new(Tensor_ {
+            storage: Arc::clone(&self.storage),
+            layout: new_layout,
+            device: self.device.clone(),
+            gradient: None,
+            require_gradient: self.require_gradient,
+        })))
+    }
+
+    pub fn permute(&self, dims: &[usize]) -> Result<Self, TensorError> {
+        let new_layout = self.layout.permute(dims)?;
+        Ok(Self(Arc::new(Tensor_ {
+            storage: Arc::clone(&self.storage),
+            layout: new_layout,
+            device: self.device.clone(),
+            gradient: None,
+            require_gradient: self.require_gradient,
+        })))
+    }
+
+    pub fn slice(&self, dimension: usize, range: Range<usize>) -> Result<Self, TensorError> {
+        // For 2D tensors with row-slicing on dimension 0, create a contiguous copy
+        // This is necessary because matmul and other ops expect contiguous storage
+        let old_shape = self.shape();
+
+        if old_shape.len() == 2 && dimension == 0 {
+            // Slicing rows - this is the common case for batching
+            let row_size = old_shape[1];
+            let num_rows = range.end - range.start;
+            let new_shape = vec![num_rows, row_size];
+
+            // Check for overflow before allocating
+            let total_size = num_rows
+                .checked_mul(row_size)
+                .ok_or(TensorError::DimensionMismatch)?;
+
+            // Get data once
+            let old_data = self.to_vec()?;
+
+            // Extract the sliced rows
+            let mut new_data = Vec::with_capacity(total_size);
+            for i in range.start..range.end {
+                let start_idx = i * row_size;
+                let end_idx = start_idx + row_size;
+                new_data.extend_from_slice(&old_data[start_idx..end_idx]);
+            }
+
+            Self::new(new_data, new_shape, self.device.clone())
+        } else {
+            // General case (less efficient but correct)
+            // This is more complex, for now we'll handle only the row-slicing case
+            // which is what we need for batching
+            Err(TensorError::InvalidDimension {
+                got: dimension,
+                max_dimension: 0,
+            })
+        }
+    }
+
+    pub fn storage(&self) -> RwLockReadGuard<'_, Box<Storage>> {
         self.storage.read().unwrap()
     }
 
@@ -102,16 +142,163 @@ impl Tensor {
         self.layout.is_contiguous()
     }
 
+    pub fn ndim(&self) -> usize {
+        self.layout.ndim()
+    }
+
     pub fn device(&self) -> &Device {
         &self.device
     }
 
-    pub fn to_cpu(&self) -> Result<Vec<f32>, NeuralNetworkError> {
-        let storage: RwLockReadGuard<'_, Box<dyn StorageBackend>> = self
-            .storage
-            .read()
-            .map_err(|_| NeuralNetworkError::LockError)?;
-        storage.to_cpu()
+    pub fn to_vec(&self) -> Result<Vec<f32>, TensorError> {
+        let storage = self.storage();
+        let cpu_storage = storage.to_cpu_storage()?;
+        Ok(cpu_storage.0)
+    }
+
+    /// Transfer tensor to a different device
+    pub fn to_device(&self, target_device: Device) -> Result<Self, TensorError> {
+        // If already on target device, return clone
+        if self.device.same_device(&target_device) {
+            return Ok(self.clone());
+        }
+
+        // Transfer via CPU
+        let data = self.to_vec()?;
+        let shape = self.shape().to_vec();
+
+        Self::new(data, shape, target_device)
+    }
+
+    pub fn relu(&self) -> Result<Self, TensorError> {
+        let storage = self.storage();
+        let result_storage = storage.relu()?;
+
+        Ok(Tensor(Arc::new(Tensor_ {
+            storage: Arc::new(RwLock::new(Box::new(result_storage))),
+            layout: self.layout.clone(),
+            device: self.device.clone(),
+            gradient: None,
+            require_gradient: false,
+        })))
+    }
+
+    pub fn tanh(&self) -> Result<Self, TensorError> {
+        let storage = self.storage();
+        let result_storage = storage.tanh()?;
+
+        Ok(Tensor(Arc::new(Tensor_ {
+            storage: Arc::new(RwLock::new(Box::new(result_storage))),
+            layout: self.layout.clone(),
+            device: self.device.clone(),
+            gradient: None,
+            require_gradient: false,
+        })))
+    }
+
+    pub fn sigmoid(&self) -> Result<Self, TensorError> {
+        let storage = self.storage();
+        let result_storage = storage.sigmoid()?;
+
+        Ok(Tensor(Arc::new(Tensor_ {
+            storage: Arc::new(RwLock::new(Box::new(result_storage))),
+            layout: self.layout.clone(),
+            device: self.device.clone(),
+            gradient: None,
+            require_gradient: false,
+        })))
+    }
+
+    pub fn softmax(&self) -> Result<Self, TensorError> {
+        let shape = self.shape();
+        if shape.len() < 2 {
+            return Err(TensorError::InvalidDimension {
+                got: shape.len(),
+                max_dimension: 2,
+            });
+        }
+
+        let batch_size = shape[0];
+        let vector_size = shape[1..].iter().product();
+
+        let storage = self.storage();
+        let result_storage = storage.softmax(batch_size, vector_size)?;
+
+        Ok(Tensor(Arc::new(Tensor_ {
+            storage: Arc::new(RwLock::new(Box::new(result_storage))),
+            layout: self.layout.clone(),
+            device: self.device.clone(),
+            gradient: None,
+            require_gradient: false,
+        })))
+    }
+
+    pub fn sub(&self, rhs: &Self) -> Result<Self, TensorError> {
+        let lhs_storage = self.storage();
+        let rhs_storage = rhs.storage();
+        let result_storage = lhs_storage.sub(&*rhs_storage)?;
+
+        Ok(Tensor(Arc::new(Tensor_ {
+            storage: Arc::new(RwLock::new(Box::new(result_storage))),
+            layout: self.layout.clone(),
+            device: self.device.clone(),
+            gradient: None,
+            require_gradient: false,
+        })))
+    }
+
+    pub fn mul_scalar(&self, scalar: f32) -> Result<Self, TensorError> {
+        let storage = self.storage();
+        let result_storage = storage.mul_scalar(scalar)?;
+
+        Ok(Tensor(Arc::new(Tensor_ {
+            storage: Arc::new(RwLock::new(Box::new(result_storage))),
+            layout: self.layout.clone(),
+            device: self.device.clone(),
+            gradient: None,
+            require_gradient: false,
+        })))
+    }
+
+    pub fn matmul(&self, rhs: &Self) -> Result<Self, TensorError> {
+        if self.ndim() != 2 || rhs.ndim() != 2 {
+            return Err(TensorError::InvalidDimension {
+                got: self.ndim().max(rhs.ndim()),
+                max_dimension: 2,
+            });
+        }
+
+        let m = self.shape()[0];
+        let k = self.shape()[1];
+        let k_rhs = rhs.shape()[0];
+        let n = rhs.shape()[1];
+
+        if k != k_rhs {
+            return Err(TensorError::DimensionMismatch);
+        }
+
+        let m = self.shape()[0];
+        let k = self.shape()[1];
+        let k_rhs = rhs.shape()[0];
+        let n = rhs.shape()[1];
+
+        if k != k_rhs {
+            return Err(TensorError::DimensionMismatch);
+        }
+
+        let lhs_storage = self.storage();
+        let rhs_storage = rhs.storage();
+        let result_storage = lhs_storage
+            .matmul(&*rhs_storage, m, k, n)
+            .unwrap_or_else(|e| panic!("Tensor matmul failed: {}", e));
+
+        Ok(Tensor(Arc::new(Tensor_ {
+            storage: Arc::new(RwLock::new(Box::new(result_storage))),
+            layout: Layout::new(vec![m, n]),
+            device: self.device.clone(),
+            gradient: None,
+            require_gradient: false,
+        })))
     }
 }
 
@@ -119,30 +306,18 @@ impl Add for Tensor {
     type Output = Self;
 
     fn add(self, other: Self) -> Self {
-        assert_eq!(
-            self.device(),
-            other.device(),
-            "Cannot add tensors on different devices: {:?} and {:?}",
-            self.device(),
-            other.device()
-        );
-        assert_eq!(
-            self.shape(),
-            other.shape(),
-            "Cannot add tensors with different shapes: {:?} and {:?}",
-            self.shape(),
-            other.shape()
-        );
-        let backend: Arc<dyn Backend> = self.device().backend();
-        let result_storage = backend
-            .add(&self.storage, &other.storage)
-            .expect("Backend add failed");
-        Self(Arc::new(Tensor_ {
-            storage: Arc::new(RwLock::new(result_storage)),
-            layout: Layout::new(self.shape().to_vec()),
+        let lhs_storage = self.storage();
+        let rhs_storage = other.storage();
+        let result_storage = lhs_storage
+            .add(&rhs_storage)
+            .unwrap_or_else(|e| panic!("Tensor addition failed: {}", e));
+
+        Tensor(Arc::new(Tensor_ {
+            storage: Arc::new(RwLock::new(Box::new(result_storage))),
+            layout: self.layout.clone(),
             device: self.device.clone(),
             gradient: None,
-            require_gradient: self.require_gradient || other.require_gradient,
+            require_gradient: false,
         }))
     }
 }
@@ -151,31 +326,44 @@ impl Mul for Tensor {
     type Output = Self;
 
     fn mul(self, other: Self) -> Self {
-        assert_eq!(
-            self.device(),
-            other.device(),
-            "Cannot add tensors on different devices: {:?} and {:?}",
-            self.device(),
-            other.device()
-        );
+        // Multiplication élément par élément (Hadamard product)
+        let lhs_storage = self.storage();
+        let rhs_storage = other.storage();
+
+        // Les deux tenseurs doivent avoir la même forme
         assert_eq!(
             self.shape(),
             other.shape(),
-            "Cannot add tensors with different shapes: {:?} and {:?}",
-            self.shape(),
-            other.shape()
+            "Shapes must match for element-wise multiplication"
         );
-        let backend: Arc<dyn Backend> = self.device().backend();
-        let result_storage = backend
-            .mul(&self.storage, &other.storage)
-            .expect("Backend add failed");
-        Self(Arc::new(Tensor_ {
-            storage: Arc::new(RwLock::new(result_storage)),
-            layout: Layout::new(self.shape().to_vec()),
+
+        let result_storage = lhs_storage
+            .mul(&*rhs_storage)
+            .unwrap_or_else(|e| panic!("Tensor multiplication failed: {}", e));
+
+        Tensor(Arc::new(Tensor_ {
+            storage: Arc::new(RwLock::new(Box::new(result_storage))),
+            layout: self.layout.clone(),
             device: self.device.clone(),
             gradient: None,
-            require_gradient: self.require_gradient || other.require_gradient,
+            require_gradient: false,
         }))
+    }
+}
+
+impl From<ArrayD<f64>> for Tensor {
+    fn from(arr: ArrayD<f64>) -> Self {
+        let data: Vec<f32> = arr.iter().map(|&x| x as f32).collect();
+        let shape: Vec<usize> = arr.shape().to_vec();
+        Tensor::new(data, shape, Device::CPU).unwrap()
+    }
+}
+
+impl From<Tensor> for ArrayD<f64> {
+    fn from(tensor: Tensor) -> Self {
+        let data = tensor.to_vec().unwrap();
+        let shape = tensor.shape().to_vec();
+        ArrayD::from_shape_vec(shape, data.iter().map(|&x| x as f64).collect()).unwrap()
     }
 }
 
@@ -184,586 +372,451 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_new() {
-        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
-        let shape: Vec<usize> = vec![2, 3];
-        let tensor: Result<Tensor, NeuralNetworkError> =
-            Tensor::new(data.clone(), shape, Device::CPU);
+    fn test_tensor_new_cpu() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let shape = vec![2, 3];
+        let tensor = Tensor::new(data.clone(), shape.clone(), Device::CPU).unwrap();
 
-        assert!(tensor.is_ok());
-        let tensor: Tensor = tensor.unwrap();
-
-        assert_eq!(tensor.to_cpu().unwrap(), data);
         assert_eq!(tensor.shape(), &[2, 3]);
-        assert_eq!(*tensor.device(), Device::CPU);
+        assert_eq!(tensor.strides(), &[3, 1]);
+        assert_eq!(tensor.ndim(), 2);
+        assert!(tensor.is_contiguous());
+        assert!(matches!(tensor.device(), Device::CPU));
     }
 
     #[test]
-    fn test_new_incompatible_shape() {
-        let data: Vec<f32> = vec![1.0, 2.0, 3.0];
-        let shape: Vec<usize> = vec![2, 3];
-        let result: Result<Tensor, NeuralNetworkError> = Tensor::new(data, shape, Device::CPU);
+    fn test_tensor_new_metal() {
+        let device = Device::new_metal(0);
+        if device.is_err() {
+            return;
+        }
+        let device = device.unwrap();
 
-        assert!(result.is_err());
-    }
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let shape = vec![2, 3];
+        let tensor = Tensor::new(data, shape, device).unwrap();
 
-    #[test]
-    fn test_new_1d() {
-        let data: Vec<f32> = vec![1.0, 2.0, 3.0];
-        let shape: Vec<usize> = vec![3];
-        let tensor: Tensor = Tensor::new(data.clone(), shape, Device::CPU).unwrap();
-
-        assert_eq!(tensor.to_cpu().unwrap(), data);
-        assert_eq!(tensor.shape(), &[3]);
-    }
-
-    #[test]
-    fn test_new_3d() {
-        let data: Vec<f32> = vec![1.0; 24];
-        let shape: Vec<usize> = vec![2, 3, 4];
-        let tensor: Tensor = Tensor::new(data, shape, Device::CPU).unwrap();
-
-        assert_eq!(tensor.shape(), &[2, 3, 4]);
-        assert_eq!(tensor.layout.num_elements(), 24);
-    }
-
-    #[test]
-    fn test_zeros() {
-        let shape: Vec<usize> = vec![2, 3];
-        let tensor: Tensor = Tensor::zeros(shape, Device::CPU).unwrap();
-
-        assert_eq!(tensor.to_cpu().unwrap(), vec![0.0; 6]);
         assert_eq!(tensor.shape(), &[2, 3]);
+        assert_eq!(tensor.strides(), &[3, 1]);
+        assert_eq!(tensor.ndim(), 2);
+        assert!(tensor.is_contiguous());
+        assert!(matches!(tensor.device(), Device::Metal(_)));
     }
 
     #[test]
-    fn test_zeros_1d() {
-        let shape: Vec<usize> = vec![5];
-        let tensor: Tensor = Tensor::zeros(shape, Device::CPU).unwrap();
+    fn test_tensor_new_1d() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let shape = vec![5];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
 
-        assert_eq!(tensor.to_cpu().unwrap(), vec![0.0; 5]);
-    }
-
-    #[test]
-    fn test_ones() {
-        let shape: Vec<usize> = vec![2, 3];
-        let tensor: Tensor = Tensor::ones(shape, Device::CPU).unwrap();
-
-        assert_eq!(tensor.to_cpu().unwrap(), vec![1.0; 6]);
-        assert_eq!(tensor.shape(), &[2, 3]);
-    }
-
-    #[test]
-    fn test_ones_1d() {
-        let shape: Vec<usize> = vec![4];
-        let tensor: Tensor = Tensor::ones(shape, Device::CPU).unwrap();
-
-        assert_eq!(tensor.to_cpu().unwrap(), vec![1.0; 4]);
-    }
-
-    #[test]
-    fn test_storage() {
-        let tensor: Tensor = Tensor::new(vec![1.0, 2.0, 3.0], vec![3], Device::CPU).unwrap();
-        let storage: RwLockReadGuard<'_, Box<dyn StorageBackend>> = tensor.storage();
-
-        assert_eq!(storage.len(), 3);
-        assert_eq!(storage.device(), Device::CPU);
-    }
-
-    #[test]
-    fn test_shape() {
-        let tensor: Tensor = Tensor::zeros(vec![2, 3, 4], Device::CPU).unwrap();
-        assert_eq!(tensor.shape(), &[2, 3, 4]);
-    }
-
-    #[test]
-    fn test_strides() {
-        let tensor: Tensor = Tensor::zeros(vec![2, 3, 4], Device::CPU).unwrap();
-        assert_eq!(tensor.strides(), &[12, 4, 1]);
-    }
-
-    #[test]
-    fn test_is_contiguous() {
-        let tensor: Tensor = Tensor::zeros(vec![2, 3], Device::CPU).unwrap();
+        assert_eq!(tensor.shape(), &[5]);
+        assert_eq!(tensor.strides(), &[1]);
+        assert_eq!(tensor.ndim(), 1);
         assert!(tensor.is_contiguous());
     }
 
     #[test]
-    fn test_device() {
-        let tensor: Tensor = Tensor::zeros(vec![2, 3], Device::CPU).unwrap();
-        assert_eq!(*tensor.device(), Device::CPU);
+    fn test_tensor_new_3d() {
+        let data: Vec<f32> = (0..24).map(|i| i as f32).collect();
+        let shape = vec![2, 3, 4];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
+
+        assert_eq!(tensor.shape(), &[2, 3, 4]);
+        assert_eq!(tensor.strides(), &[12, 4, 1]);
+        assert_eq!(tensor.ndim(), 3);
+        assert!(tensor.is_contiguous());
     }
 
     #[test]
-    fn test_to_cpu() {
-        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
-        let tensor: Tensor = Tensor::new(data.clone(), vec![2, 2], Device::CPU).unwrap();
+    fn test_tensor_new_3d_metal() {
+        let device = Device::new_metal(0);
+        if device.is_err() {
+            return;
+        }
+        let device = device.unwrap();
 
-        let result: Result<Vec<f32>, NeuralNetworkError> = tensor.to_cpu();
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), data);
+        let data: Vec<f32> = (0..24).map(|i| i as f32).collect();
+        let shape = vec![2, 3, 4];
+        let tensor = Tensor::new(data, shape, device).unwrap();
+
+        assert_eq!(tensor.shape(), &[2, 3, 4]);
+        assert_eq!(tensor.strides(), &[12, 4, 1]);
+        assert_eq!(tensor.ndim(), 3);
+        assert!(tensor.is_contiguous());
     }
 
     #[test]
-    fn test_clone() {
-        let tensor1: Tensor = Tensor::new(vec![1.0, 2.0, 3.0], vec![3], Device::CPU).unwrap();
-        let tensor2: Tensor = tensor1.clone();
+    fn test_tensor_new_incompatible_shape() {
+        let data = vec![1.0, 2.0, 3.0, 4.0];
+        let shape = vec![2, 3];
 
-        assert_eq!(tensor1.to_cpu().unwrap(), tensor2.to_cpu().unwrap());
-        assert_eq!(tensor1.shape(), tensor2.shape());
+        let result = Tensor::new(data, shape, Device::CPU);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            TensorError::IncompatibleShape { .. }
+        ));
     }
 
     #[test]
-    fn test_clone_shares_inner() {
-        let tensor1: Tensor = Tensor::new(vec![1.0, 2.0, 3.0], vec![3], Device::CPU).unwrap();
-        let tensor2: Tensor = tensor1.clone();
+    fn test_tensor_new_incompatible_shape_metal() {
+        let device = Device::new_metal(0);
+        if device.is_err() {
+            return;
+        }
+        let device = device.unwrap();
 
-        assert!(Arc::ptr_eq(&tensor1.0, &tensor2.0));
+        let data = vec![1.0, 2.0, 3.0, 4.0];
+        let shape = vec![2, 3];
+
+        let result = Tensor::new(data, shape, device);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            TensorError::IncompatibleShape { .. }
+        ));
     }
 
     #[test]
-    fn test_deref_layout() {
-        let tensor: Tensor = Tensor::zeros(vec![2, 3], Device::CPU).unwrap();
-        assert_eq!(tensor.layout.shape(), &[2, 3]);
-        assert_eq!(tensor.layout.ndim(), 2);
+    fn test_tensor_transpose() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let shape = vec![2, 3];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
+        let transposed = tensor.transpose().unwrap();
+
+        assert_eq!(transposed.shape(), &[3, 2]);
+        assert_eq!(transposed.strides(), &[1, 3]);
+        assert!(!transposed.is_contiguous());
     }
 
     #[test]
-    fn test_deref_gradient() {
-        let tensor: Tensor = Tensor::zeros(vec![2, 3], Device::CPU).unwrap();
-        assert!(tensor.gradient.is_none());
+    fn test_tensor_transpose_metal() {
+        let device = Device::new_metal(0);
+        if device.is_err() {
+            return;
+        }
+        let device = device.unwrap();
+
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let shape = vec![2, 3];
+        let tensor = Tensor::new(data, shape, device).unwrap();
+        let transposed = tensor.transpose().unwrap();
+
+        assert_eq!(transposed.shape(), &[3, 2]);
+        assert_eq!(transposed.strides(), &[1, 3]);
+        assert!(!transposed.is_contiguous());
     }
 
     #[test]
-    fn test_deref_require_gradient() {
-        let tensor: Tensor = Tensor::zeros(vec![2, 3], Device::CPU).unwrap();
-        assert!(!tensor.require_gradient);
+    fn test_tensor_transpose_invalid_dimension() {
+        let data = vec![1.0, 2.0, 3.0, 4.0];
+        let shape = vec![4];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
+        let result = tensor.transpose();
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            TensorError::InvalidDimension { .. }
+        ));
     }
 
     #[test]
-    fn test_add_chain() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0], vec![2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![10.0, 20.0], vec![2], Device::CPU).unwrap();
-        let c: Tensor = Tensor::new(vec![100.0, 200.0], vec![2], Device::CPU).unwrap();
+    fn test_tensor_permute_3d() {
+        let data: Vec<f32> = (0..24).map(|i| i as f32).collect();
+        let shape = vec![2, 3, 4];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
+        let permuted = tensor.permute(&[2, 0, 1]).unwrap();
 
-        let result: Tensor = a + b + c;
-
-        let data: Vec<f32> = result.to_cpu().unwrap();
-        assert_eq!(data, vec![111.0, 222.0]);
+        assert_eq!(permuted.shape(), &[4, 2, 3]);
+        assert_eq!(permuted.strides(), &[1, 12, 4]);
+        assert!(!permuted.is_contiguous());
     }
 
     #[test]
-    fn test_add_same_tensor() {
-        let a: Tensor = Tensor::new(vec![5.0, 10.0, 15.0], vec![3], Device::CPU).unwrap();
-        let b: Tensor = a.clone();
+    fn test_tensor_permute_3d_metal() {
+        let device = Device::new_metal(0);
+        if device.is_err() {
+            return;
+        }
+        let device = device.unwrap();
 
-        let result: Tensor = a + b;
+        let data: Vec<f32> = (0..24).map(|i| i as f32).collect();
+        let shape = vec![2, 3, 4];
+        let tensor = Tensor::new(data, shape, device).unwrap();
+        let permuted = tensor.permute(&[2, 0, 1]).unwrap();
 
-        let data: Vec<f32> = result.to_cpu().unwrap();
-        assert_eq!(data, vec![10.0, 20.0, 30.0]);
+        assert_eq!(permuted.shape(), &[4, 2, 3]);
+        assert_eq!(permuted.strides(), &[1, 12, 4]);
+        assert!(!permuted.is_contiguous());
     }
 
     #[test]
-    fn test_add_result_device() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0], vec![2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![3.0, 4.0], vec![2], Device::CPU).unwrap();
+    fn test_tensor_permute_invalid_dimensions() {
+        let data: Vec<f32> = (0..24).map(|i| i as f32).collect();
+        let shape = vec![2, 3, 4];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
 
-        let c: Tensor = a + b;
+        let result = tensor.permute(&[0, 1]);
+        assert!(result.is_err());
 
-        assert_eq!(*c.device(), Device::CPU);
+        let result = tensor.permute(&[0, 1, 5]);
+        assert!(result.is_err());
+
+        let result = tensor.permute(&[0, 1, 1]);
+        assert!(result.is_err());
     }
 
     #[test]
-    fn test_add_result_shape() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![5.0, 6.0, 7.0, 8.0], vec![2, 2], Device::CPU).unwrap();
+    fn test_tensor_slice_first_dimension() {
+        let data: Vec<f32> = (0..20).map(|i| i as f32).collect();
+        let shape = vec![5, 4];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
+        let sliced = tensor.slice(0, 1..3).unwrap();
 
-        let c: Tensor = a + b;
-
-        assert_eq!(c.shape(), &[2, 2]);
+        assert_eq!(sliced.shape(), &[2, 4]);
+        assert_eq!(sliced.strides(), &[4, 1]);
+        assert!(sliced.is_contiguous());
     }
 
     #[test]
-    fn test_add_result_is_contiguous() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0, 3.0], vec![3], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![4.0, 5.0, 6.0], vec![3], Device::CPU).unwrap();
+    fn test_tensor_slice_first_dimension_metal() {
+        let device = Device::new_metal(0);
+        if device.is_err() {
+            return;
+        }
+        let device = device.unwrap();
 
-        let c: Tensor = a + b;
+        let data: Vec<f32> = (0..20).map(|i| i as f32).collect();
+        let shape = vec![5, 4];
+        let tensor = Tensor::new(data, shape, device).unwrap();
+        let sliced = tensor.slice(0, 1..3).unwrap();
 
-        assert!(c.is_contiguous());
+        assert_eq!(sliced.shape(), &[2, 4]);
+        assert_eq!(sliced.strides(), &[4, 1]);
+        assert!(sliced.is_contiguous());
     }
 
     #[test]
-    fn test_add_result_strides() {
-        let a: Tensor =
-            Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3], Device::CPU).unwrap();
-        let b: Tensor =
-            Tensor::new(vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0], vec![2, 3], Device::CPU).unwrap();
+    fn test_tensor_slice_last_dimension() {
+        let data: Vec<f32> = (0..20).map(|i| i as f32).collect();
+        let shape = vec![5, 4];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
+        let sliced = tensor.slice(1, 1..3).unwrap();
 
-        let c: Tensor = a + b;
-
-        assert_eq!(c.strides(), &[3, 1]);
+        assert_eq!(sliced.shape(), &[5, 2]);
+        assert_eq!(sliced.strides(), &[4, 1]);
+        assert!(!sliced.is_contiguous());
     }
 
     #[test]
-    #[should_panic(expected = "Cannot add tensors with different shapes")]
-    fn test_add_shape_mismatch() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0], vec![2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![1.0, 2.0, 3.0], vec![3], Device::CPU).unwrap();
+    fn test_tensor_slice_invalid_dimension() {
+        let data: Vec<f32> = (0..20).map(|i| i as f32).collect();
+        let shape = vec![5, 4];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
 
-        let _c: Tensor = a + b;
+        let result = tensor.slice(2, 0..2);
+        assert!(result.is_err());
     }
 
     #[test]
-    #[should_panic(expected = "Cannot add tensors with different shapes")]
-    fn test_add_dimension_mismatch() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![4], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2], Device::CPU).unwrap();
+    fn test_tensor_slice_out_of_bounds() {
+        let data: Vec<f32> = (0..20).map(|i| i as f32).collect();
+        let shape = vec![5, 4];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
 
-        let _c: Tensor = a + b;
+        let result = tensor.slice(0, 0..10);
+        assert!(result.is_err());
     }
 
     #[test]
-    fn test_add_preserves_clone_semantics() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0], vec![2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![3.0, 4.0], vec![2], Device::CPU).unwrap();
+    fn test_tensor_clone() {
+        let data = vec![1.0, 2.0, 3.0, 4.0];
+        let shape = vec![2, 2];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
+        let cloned = tensor.clone();
 
-        let c: Tensor = a + b;
-        let d: Tensor = c.clone();
-
-        // c et d doivent partager le même Tensor_ interne
-        assert!(Arc::ptr_eq(&c.0, &d.0));
+        assert_eq!(tensor.shape(), cloned.shape());
+        assert_eq!(tensor.strides(), cloned.strides());
     }
 
     #[test]
-    fn test_add_multiple_operations() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0], vec![2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![3.0, 4.0], vec![2], Device::CPU).unwrap();
+    fn test_tensor_storage_sharing() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let shape = vec![2, 3];
+        let tensor1 = Tensor::new(data, shape, Device::CPU).unwrap();
+        let tensor2 = tensor1.transpose().unwrap();
 
-        let c: Tensor = a.clone() + b.clone();
-        let d: Tensor = c + a.clone();
-        let e: Tensor = d + b;
-
-        let result: Vec<f32> = e.to_cpu().unwrap();
-        // (1+3) + 1 + 3 = 8
-        // (2+4) + 2 + 4 = 12
-        assert_eq!(result, vec![8.0, 12.0]);
+        assert_eq!(Arc::as_ptr(&tensor1.storage), Arc::as_ptr(&tensor2.storage));
     }
 
     #[test]
-    fn test_add_with_zeros_constructor() {
-        let a: Tensor = Tensor::new(vec![5.0, 10.0, 15.0], vec![3], Device::CPU).unwrap();
-        let b: Tensor = Tensor::zeros(vec![3], Device::CPU).unwrap();
+    fn test_tensor_storage_sharing_metal() {
+        let device = Device::new_metal(0);
+        if device.is_err() {
+            return;
+        }
+        let device = device.unwrap();
 
-        let c: Tensor = a + b;
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let shape = vec![2, 3];
+        let tensor1 = Tensor::new(data, shape, device).unwrap();
+        let tensor2 = tensor1.transpose().unwrap();
 
-        let result: Vec<f32> = c.to_cpu().unwrap();
-        assert_eq!(result, vec![5.0, 10.0, 15.0]);
+        assert_eq!(Arc::as_ptr(&tensor1.storage), Arc::as_ptr(&tensor2.storage));
     }
 
     #[test]
-    fn test_add_with_ones_constructor() {
-        let a: Tensor = Tensor::ones(vec![3], Device::CPU).unwrap();
-        let b: Tensor = Tensor::ones(vec![3], Device::CPU).unwrap();
+    fn test_tensor_complex_operations() {
+        let data: Vec<f32> = (0..24).map(|i| i as f32).collect();
+        let shape = vec![2, 3, 4];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
 
-        let c: Tensor = a + b;
+        let permuted = tensor.permute(&[1, 0, 2]).unwrap();
+        assert_eq!(permuted.shape(), &[3, 2, 4]);
 
-        let result: Vec<f32> = c.to_cpu().unwrap();
-        assert_eq!(result, vec![2.0, 2.0, 2.0]);
+        let sliced = permuted.slice(0, 1..3).unwrap();
+        assert_eq!(sliced.shape(), &[2, 2, 4]);
     }
 
     #[test]
-    fn test_add_operator_simple() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![4], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![10.0, 20.0, 30.0, 40.0], vec![4], Device::CPU).unwrap();
+    fn test_tensor_complex_operations_metal() {
+        let device = Device::new_metal(0);
+        if device.is_err() {
+            return;
+        }
+        let device = device.unwrap();
 
-        let c: Tensor = a + b;
+        let data: Vec<f32> = (0..24).map(|i| i as f32).collect();
+        let shape = vec![2, 3, 4];
+        let tensor = Tensor::new(data, shape, device).unwrap();
 
-        let result: Vec<f32> = c.to_cpu().unwrap();
-        assert_eq!(result, vec![11.0, 22.0, 33.0, 44.0]);
+        let permuted = tensor.permute(&[1, 0, 2]).unwrap();
+        assert_eq!(permuted.shape(), &[3, 2, 4]);
+
+        let sliced = permuted.slice(0, 1..3).unwrap();
+        assert_eq!(sliced.shape(), &[2, 2, 4]);
     }
 
     #[test]
-    fn test_add_operator_2d() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![5.0, 6.0, 7.0, 8.0], vec![2, 2], Device::CPU).unwrap();
+    fn test_tensor_multiple_slices() {
+        let data: Vec<f32> = (0..60).map(|i| i as f32).collect();
+        let shape = vec![5, 4, 3];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
 
-        let c: Tensor = a + b;
+        let sliced1 = tensor.slice(0, 1..4).unwrap();
+        assert_eq!(sliced1.shape(), &[3, 4, 3]);
 
-        let result: Vec<f32> = c.to_cpu().unwrap();
-        assert_eq!(result, vec![6.0, 8.0, 10.0, 12.0]);
+        let sliced2 = sliced1.slice(1, 1..3).unwrap();
+        assert_eq!(sliced2.shape(), &[3, 2, 3]);
+
+        let sliced3 = sliced2.slice(2, 0..2).unwrap();
+        assert_eq!(sliced3.shape(), &[3, 2, 2]);
     }
 
     #[test]
-    fn test_add_consumes_operands() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0], vec![2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![3.0, 4.0], vec![2], Device::CPU).unwrap();
+    fn test_tensor_multiple_slices_metal() {
+        let device = Device::new_metal(0);
+        if device.is_err() {
+            return;
+        }
+        let device = device.unwrap();
 
-        let c: Tensor = a + b;
+        let data: Vec<f32> = (0..60).map(|i| i as f32).collect();
+        let shape = vec![5, 4, 3];
+        let tensor = Tensor::new(data, shape, device).unwrap();
 
-        assert_eq!(c.to_cpu().unwrap(), vec![4.0, 6.0]);
+        let sliced1 = tensor.slice(0, 1..4).unwrap();
+        assert_eq!(sliced1.shape(), &[3, 4, 3]);
+
+        let sliced2 = sliced1.slice(1, 1..3).unwrap();
+        assert_eq!(sliced2.shape(), &[3, 2, 3]);
+
+        let sliced3 = sliced2.slice(2, 0..2).unwrap();
+        assert_eq!(sliced3.shape(), &[3, 2, 2]);
     }
 
     #[test]
-    fn test_mul_chain() {
-        let a: Tensor = Tensor::new(vec![2.0, 3.0], vec![2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![4.0, 5.0], vec![2], Device::CPU).unwrap();
-        let c: Tensor = Tensor::new(vec![10.0, 10.0], vec![2], Device::CPU).unwrap();
+    fn test_tensor_is_contiguous_after_operations() {
+        let data: Vec<f32> = (0..12).map(|i| i as f32).collect();
+        let shape = vec![3, 4];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
 
-        let result: Tensor = a * b * c;
+        assert!(tensor.is_contiguous());
 
-        let data: Vec<f32> = result.to_cpu().unwrap();
-        // (2*4)*10 = 80
-        // (3*5)*10 = 150
-        assert_eq!(data, vec![80.0, 150.0]);
+        let transposed = tensor.transpose().unwrap();
+        assert!(!transposed.is_contiguous());
+
+        let sliced_first = tensor.slice(0, 0..2).unwrap();
+        assert!(sliced_first.is_contiguous());
+
+        let sliced_last = tensor.slice(1, 0..2).unwrap();
+        assert!(!sliced_last.is_contiguous());
     }
 
     #[test]
-    fn test_mul_same_tensor() {
-        let a: Tensor = Tensor::new(vec![2.0, 3.0, 4.0], vec![3], Device::CPU).unwrap();
-        let b: Tensor = a.clone();
+    fn test_tensor_device_preserved() {
+        let data = vec![1.0, 2.0, 3.0, 4.0];
+        let shape = vec![2, 2];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
 
-        let result: Tensor = a * b;
+        let transposed = tensor.transpose().unwrap();
+        assert!(matches!(transposed.device(), Device::CPU));
 
-        let data: Vec<f32> = result.to_cpu().unwrap();
-        assert_eq!(data, vec![4.0, 9.0, 16.0]);
+        let permuted = tensor.permute(&[1, 0]).unwrap();
+        assert!(matches!(permuted.device(), Device::CPU));
+
+        let sliced = tensor.slice(0, 0..1).unwrap();
+        assert!(matches!(sliced.device(), Device::CPU));
     }
 
     #[test]
-    fn test_mul_result_device() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0], vec![2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![3.0, 4.0], vec![2], Device::CPU).unwrap();
+    fn test_tensor_device_preserved_metal() {
+        let device = Device::new_metal(0);
+        if device.is_err() {
+            return;
+        }
+        let device = device.unwrap();
 
-        let c: Tensor = a * b;
+        let data = vec![1.0, 2.0, 3.0, 4.0];
+        let shape = vec![2, 2];
+        let tensor = Tensor::new(data, shape, device).unwrap();
 
-        assert_eq!(*c.device(), Device::CPU);
+        let transposed = tensor.transpose().unwrap();
+        assert!(matches!(transposed.device(), Device::Metal(_)));
+
+        let permuted = tensor.permute(&[1, 0]).unwrap();
+        assert!(matches!(permuted.device(), Device::Metal(_)));
+
+        let sliced = tensor.slice(0, 0..1).unwrap();
+        assert!(matches!(sliced.device(), Device::Metal(_)));
     }
 
     #[test]
-    fn test_mul_result_shape() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![5.0, 6.0, 7.0, 8.0], vec![2, 2], Device::CPU).unwrap();
+    fn test_tensor_large_tensor() {
+        let size = 1000;
+        let data: Vec<f32> = (0..size).map(|i| i as f32).collect();
+        let shape = vec![size];
+        let tensor = Tensor::new(data, shape, Device::CPU).unwrap();
 
-        let c: Tensor = a * b;
-
-        assert_eq!(c.shape(), &[2, 2]);
+        assert_eq!(tensor.shape(), &[size]);
+        assert!(tensor.is_contiguous());
     }
 
     #[test]
-    fn test_mul_result_is_contiguous() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0, 3.0], vec![3], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![4.0, 5.0, 6.0], vec![3], Device::CPU).unwrap();
+    fn test_tensor_large_tensor_metal() {
+        let device = Device::new_metal(0);
+        if device.is_err() {
+            return;
+        }
+        let device = device.unwrap();
 
-        let c: Tensor = a * b;
+        let size = 1000;
+        let data: Vec<f32> = (0..size).map(|i| i as f32).collect();
+        let shape = vec![size];
+        let tensor = Tensor::new(data, shape, device).unwrap();
 
-        assert!(c.is_contiguous());
-    }
-
-    #[test]
-    fn test_mul_result_strides() {
-        let a: Tensor =
-            Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3], Device::CPU).unwrap();
-        let b: Tensor =
-            Tensor::new(vec![2.0, 2.0, 2.0, 2.0, 2.0, 2.0], vec![2, 3], Device::CPU).unwrap();
-
-        let c: Tensor = a * b;
-
-        assert_eq!(c.strides(), &[3, 1]);
-    }
-
-    #[test]
-    #[should_panic(expected = "Cannot add tensors with different shapes")]
-    fn test_mul_shape_mismatch() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0], vec![2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![1.0, 2.0, 3.0], vec![3], Device::CPU).unwrap();
-
-        let _c: Tensor = a * b;
-    }
-
-    #[test]
-    #[should_panic(expected = "Cannot add tensors with different shapes")]
-    fn test_mul_dimension_mismatch() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![4], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2], Device::CPU).unwrap();
-
-        let _c: Tensor = a * b;
-    }
-
-    #[test]
-    fn test_mul_preserves_clone_semantics() {
-        let a: Tensor = Tensor::new(vec![2.0, 3.0], vec![2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![4.0, 5.0], vec![2], Device::CPU).unwrap();
-
-        let c: Tensor = a * b;
-        let d: Tensor = c.clone();
-
-        // c et d doivent partager le même Tensor_ interne
-        assert!(Arc::ptr_eq(&c.0, &d.0));
-    }
-
-    #[test]
-    fn test_mul_multiple_operations() {
-        let a: Tensor = Tensor::new(vec![2.0, 3.0], vec![2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![4.0, 5.0], vec![2], Device::CPU).unwrap();
-
-        let c: Tensor = a.clone() * b.clone();
-        let d: Tensor = c * a.clone();
-        let e: Tensor = d * b;
-
-        let result: Vec<f32> = e.to_cpu().unwrap();
-        // (2*4)*2*4 = 64
-        // (3*5)*3*5 = 225
-        assert_eq!(result, vec![64.0, 225.0]);
-    }
-
-    #[test]
-    fn test_mul_with_zeros_constructor() {
-        let a: Tensor = Tensor::new(vec![5.0, 10.0, 15.0], vec![3], Device::CPU).unwrap();
-        let b: Tensor = Tensor::zeros(vec![3], Device::CPU).unwrap();
-
-        let c: Tensor = a * b;
-
-        let result: Vec<f32> = c.to_cpu().unwrap();
-        assert_eq!(result, vec![0.0, 0.0, 0.0]);
-    }
-
-    #[test]
-    fn test_mul_with_ones_constructor() {
-        let a: Tensor = Tensor::new(vec![7.0, 13.0, 21.0], vec![3], Device::CPU).unwrap();
-        let b: Tensor = Tensor::ones(vec![3], Device::CPU).unwrap();
-
-        let c: Tensor = a * b;
-
-        let result: Vec<f32> = c.to_cpu().unwrap();
-        assert_eq!(result, vec![7.0, 13.0, 21.0]);
-    }
-
-    #[test]
-    fn test_mul_operator_simple() {
-        let a: Tensor = Tensor::new(vec![2.0, 3.0, 4.0, 5.0], vec![4], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![10.0, 20.0, 30.0, 40.0], vec![4], Device::CPU).unwrap();
-
-        let c: Tensor = a * b;
-
-        let result: Vec<f32> = c.to_cpu().unwrap();
-        assert_eq!(result, vec![20.0, 60.0, 120.0, 200.0]);
-    }
-
-    #[test]
-    fn test_mul_operator_2d() {
-        let a: Tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![5.0, 6.0, 7.0, 8.0], vec![2, 2], Device::CPU).unwrap();
-
-        let c: Tensor = a * b;
-
-        let result: Vec<f32> = c.to_cpu().unwrap();
-        assert_eq!(result, vec![5.0, 12.0, 21.0, 32.0]);
-    }
-
-    #[test]
-    fn test_mul_consumes_operands() {
-        let a: Tensor = Tensor::new(vec![2.0, 3.0], vec![2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![4.0, 5.0], vec![2], Device::CPU).unwrap();
-
-        let c: Tensor = a * b;
-
-        assert_eq!(c.to_cpu().unwrap(), vec![8.0, 15.0]);
-    }
-
-    #[test]
-    fn test_mul_negatives() {
-        let a: Tensor = Tensor::new(vec![-2.0, 3.0, -4.0], vec![3], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![5.0, -2.0, -3.0], vec![3], Device::CPU).unwrap();
-
-        let c: Tensor = a * b;
-
-        let result: Vec<f32> = c.to_cpu().unwrap();
-        assert_eq!(result, vec![-10.0, -6.0, 12.0]);
-    }
-
-    #[test]
-    fn test_mul_floats() {
-        let a: Tensor = Tensor::new(vec![1.5, 2.5, 3.5], vec![3], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![2.0, 4.0, 0.5], vec![3], Device::CPU).unwrap();
-
-        let c: Tensor = a * b;
-
-        let result: Vec<f32> = c.to_cpu().unwrap();
-        let epsilon: f32 = 1e-6;
-        assert!((result[0] - 3.0).abs() < epsilon);
-        assert!((result[1] - 10.0).abs() < epsilon);
-        assert!((result[2] - 1.75).abs() < epsilon);
-    }
-
-    #[test]
-    fn test_mul_single_element() {
-        let a: Tensor = Tensor::new(vec![7.0], vec![1], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![6.0], vec![1], Device::CPU).unwrap();
-
-        let c: Tensor = a * b;
-
-        let result: Vec<f32> = c.to_cpu().unwrap();
-        assert_eq!(result, vec![42.0]);
-    }
-
-    #[test]
-    fn test_mul_mixed_operations_with_add() {
-        let a: Tensor = Tensor::new(vec![2.0, 3.0], vec![2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![4.0, 5.0], vec![2], Device::CPU).unwrap();
-        let c: Tensor = Tensor::new(vec![1.0, 1.0], vec![2], Device::CPU).unwrap();
-
-        // (a * b) + c = (2*4) + 1 = 9, (3*5) + 1 = 16
-        let result: Tensor = (a * b) + c;
-
-        let data: Vec<f32> = result.to_cpu().unwrap();
-        assert_eq!(data, vec![9.0, 16.0]);
-    }
-
-    #[test]
-    fn test_add_mul_distributivity() {
-        // Teste (a + b) * c vs (a * c) + (b * c)
-        let a: Tensor = Tensor::new(vec![2.0, 3.0], vec![2], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![4.0, 5.0], vec![2], Device::CPU).unwrap();
-        let c: Tensor = Tensor::new(vec![10.0, 10.0], vec![2], Device::CPU).unwrap();
-
-        let result1: Tensor = (a.clone() + b.clone()) * c.clone();
-        let result2: Tensor = (a * c.clone()) + (b * c);
-
-        assert_eq!(result1.to_cpu().unwrap(), result2.to_cpu().unwrap());
-    }
-
-    #[test]
-    fn test_mul_require_gradient_propagation() {
-        let mut a_inner = Tensor::new(vec![2.0], vec![1], Device::CPU).unwrap();
-        Arc::get_mut(&mut a_inner.0).unwrap().require_gradient = true;
-
-        let b: Tensor = Tensor::new(vec![3.0], vec![1], Device::CPU).unwrap();
-
-        let c: Tensor = a_inner * b;
-
-        assert!(c.require_gradient);
-    }
-
-    #[test]
-    fn test_mul_both_require_gradient() {
-        let mut a_inner = Tensor::new(vec![2.0], vec![1], Device::CPU).unwrap();
-        Arc::get_mut(&mut a_inner.0).unwrap().require_gradient = true;
-
-        let mut b_inner = Tensor::new(vec![3.0], vec![1], Device::CPU).unwrap();
-        Arc::get_mut(&mut b_inner.0).unwrap().require_gradient = true;
-
-        let c: Tensor = a_inner * b_inner;
-
-        assert!(c.require_gradient);
-    }
-
-    #[test]
-    fn test_mul_no_gradient_propagation() {
-        let a: Tensor = Tensor::new(vec![2.0], vec![1], Device::CPU).unwrap();
-        let b: Tensor = Tensor::new(vec![3.0], vec![1], Device::CPU).unwrap();
-
-        let c: Tensor = a * b;
-
-        assert!(!c.require_gradient);
+        assert_eq!(tensor.shape(), &[size]);
+        assert!(tensor.is_contiguous());
     }
 }

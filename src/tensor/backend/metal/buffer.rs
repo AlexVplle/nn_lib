@@ -1,6 +1,10 @@
+use std::{collections::HashMap, sync::Arc};
+
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::NSRange;
-use objc2_metal::MTLBuffer;
+use objc2_metal::{MTLBuffer, MTLResource};
+
+pub type MetalResource = ProtocolObject<dyn MTLResource>;
 
 #[derive(Eq, PartialEq, Debug, Clone, Hash)]
 pub struct Buffer {
@@ -37,6 +41,8 @@ impl AsRef<ProtocolObject<dyn MTLBuffer>> for Buffer {
         &self.raw
     }
 }
+
+pub type BufferMap = HashMap<usize, Vec<Arc<Buffer>>>;
 
 #[cfg(test)]
 mod tests {

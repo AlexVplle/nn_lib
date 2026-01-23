@@ -1,4 +1,3 @@
-use ndarray::ArrayD;
 use std::any::Any;
 
 pub mod activation;
@@ -14,6 +13,7 @@ pub use pooling::MaxPoolingLayer;
 pub use reshape::ReshapeLayer;
 
 use crate::error::NeuralNetworkError;
+use crate::tensor::Tensor;
 
 /// The `Layer` trait need to be implemented by any nn layer
 //
@@ -25,15 +25,14 @@ use crate::error::NeuralNetworkError;
 /// The convention chosen in the layer implementations is (n, features) where n is the number of
 /// sample in the batch
 pub trait Layer {
-    fn feed_forward_save(&mut self, input: &ArrayD<f64>)
-        -> Result<ArrayD<f64>, NeuralNetworkError>;
+    fn feed_forward_save(&mut self, input: &Tensor) -> Result<Tensor, NeuralNetworkError>;
 
-    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError>;
+    fn feed_forward(&self, input: &Tensor) -> Result<Tensor, NeuralNetworkError>;
 
     fn propagate_backward(
         &mut self,
-        output_gradient: &ArrayD<f64>,
-    ) -> Result<ArrayD<f64>, NeuralNetworkError>;
+        output_gradient: &Tensor,
+    ) -> Result<Tensor, NeuralNetworkError>;
 
     fn as_any(&self) -> &dyn Any;
 
@@ -41,9 +40,9 @@ pub trait Layer {
 }
 
 pub trait Trainable {
-    fn get_parameters(&self) -> Vec<ArrayD<f64>>;
+    fn get_parameters(&self) -> Vec<Tensor>;
 
-    fn get_parameters_mut(&mut self) -> Vec<&mut ArrayD<f64>>;
+    fn get_parameters_mut(&mut self) -> Vec<&mut Tensor>;
 
-    fn get_gradients(&self) -> Vec<ArrayD<f64>>;
+    fn get_gradients(&self) -> Vec<Tensor>;
 }

@@ -2,12 +2,12 @@ use crate::{
     activation::Activation,
     cost::CostFunction,
     error::NeuralNetworkError,
-    layers::{ActivationLayer, ConvolutionalLayer, DenseLayer, Layer},
+    layers::{ActivationLayer, DenseLayer, Layer, Trainable},
     metrics::{Benchmark, History, Metrics},
     optimizer::Optimizer,
+    tensor::{Device, Tensor},
 };
 use log::debug;
-use ndarray::{ArrayD, Axis};
 use ndarray_rand::rand::seq::SliceRandom;
 use ndarray_rand::rand::thread_rng;
 
@@ -108,69 +108,94 @@ pub struct Sequential {
 }
 
 impl Sequential {
-    /// predict a value from the neural network
-    /// the shape of the prediction is (n, dim o) where **dim o** is the dimension of the network
-    /// last layer and **n** is the number of point in the batch.
-    ///
-    /// # Arguments
-    /// * `input` : batched input, of size (n, dim i) where **dim i** is the dimension of the
-    /// network first layer and **n** is the number of point in the batch.
-    pub fn predict(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
-        let mut output: ArrayD<f64> = input.clone();
+    /// Get the device of the network (from first trainable layer)
+    fn get_device(&self) -> Device {
         for layer in &self.layers {
-            output = layer.feed_forward(&output)?;
+            if let Some(trainable) = layer.as_any().downcast_ref::<crate::layers::DenseLayer>() {
+                return trainable.get_parameters()[0].device().clone();
+            }
         }
-        Ok(output)
+        // Fallback to CPU if no trainable layers found
+        Device::CPU
     }
 
-    /// Evaluate the **trained** neural network on a test input and observed values.
-    /// returning a `Benchmark` containing the error on the test set, along with the metrics
-    /// provided
+    /// Predict a value from the neural network
     ///
     /// # Arguments
-    /// * `test_data` test data set, the outer dimension must contain the data
-    /// * `metrics` optional metrics struct
-    /// * `batch_size` the batch size, ie: number of data point treated simultaneously
+    /// * `input` - Batched input tensor, shape: [batch_size, input_features]
+    ///
+    /// # Returns
+    /// * `Result<Tensor, NeuralNetworkError>` - Output tensor, shape: [batch_size, output_features]
+    pub fn predict(&self, input: &Tensor) -> Result<Tensor, NeuralNetworkError> {
+        let mut current_output = input.clone();
+
+        for layer in &self.layers {
+            current_output = layer.feed_forward(&current_output)?;
+        }
+
+        Ok(current_output)
+    }
+
+    /// Evaluate the trained neural network on test data
+    ///
+    /// # Arguments
+    /// * `test_data` - Test data tensors (features, labels), shapes: [n_samples, n_features] and [n_samples, n_classes]
+    /// * `batch_size` - Batch size for evaluation
+    ///
+    /// # Returns
+    /// * `Result<Benchmark, NeuralNetworkError>` - Evaluation metrics and loss
     pub fn evaluate(
         &self,
-        test_data: (&ArrayD<f64>, &ArrayD<f64>),
+        test_data: (&Tensor, &Tensor),
         batch_size: usize,
-    ) -> Benchmark {
-        let metrics: Metrics = self
+    ) -> Result<Benchmark, NeuralNetworkError> {
+        let metrics = self
             .metrics
             .clone()
-            .expect("Metrics must be set before calling evaluate");
-        let mut bench: Benchmark = Benchmark::new(metrics);
-        let (x, y): (&ArrayD<f64>, &ArrayD<f64>) = test_data;
-        assert_eq!(x.shape()[0], y.shape()[0]);
-        let batches: Vec<(ArrayD<f64>, ArrayD<f64>)> = Self::create_batches(x, y, batch_size);
+            .expect("Metrics must be set before evaluation");
+        let mut bench = Benchmark::new(metrics);
+        let (x, y) = test_data;
 
-        let mut total_loss: f64 = 0.0;
-        let mut batch_count: usize = 0;
+        assert_eq!(x.shape()[0], y.shape()[0]);
+        let batches = Self::create_batches(x, y, batch_size)?;
+
+        let mut total_loss = 0.0;
+        let mut batch_count = 0;
+
+        // Get network device
+        let network_device = self.get_device();
 
         for (batched_x, batched_y) in batches.into_iter() {
-            let output: ArrayD<f64> = self.predict(&batched_x).unwrap();
+            // Transfer batch to network device if needed
+            let batch_x_device = batched_x.to_device(network_device.clone())?;
+            let batch_y_device = batched_y.to_device(network_device.clone())?;
 
-            let batch_loss: f64 = self.cost_function.cost(&output, &batched_y);
-
-            bench.metrics.accumulate(&output, &batched_y);
-
+            let output = self.predict(&batch_x_device)?;
+            let batch_loss = self.cost_function.cost(&output, &batch_y_device)?;
+            bench.metrics.accumulate(&output, &batch_y_device)?;
             total_loss += batch_loss;
             batch_count += 1;
         }
 
         bench.metrics.finalize();
         bench.loss = total_loss / batch_count as f64;
-        bench
+        Ok(bench)
     }
 
-    /// Train the neural network with Gradient descent Algorithm
+    /// Train the neural network with gradient descent
+    ///
     /// # Arguments
-    /// * `train_data`
+    /// * `train_data` - Training data tensors (features, labels)
+    /// * `validation_data` - Optional validation data tensors
+    /// * `epochs` - Number of training epochs
+    /// * `batch_size` - Size of mini-batches
+    ///
+    /// # Returns
+    /// * `Result<(History, Option<History>), NeuralNetworkError>` - Training and validation history
     pub fn train(
         &mut self,
-        train_data: (&ArrayD<f64>, &ArrayD<f64>),
-        validation_data: Option<(&ArrayD<f64>, &ArrayD<f64>)>,
+        train_data: (&Tensor, &Tensor),
+        validation_data: Option<(&Tensor, &Tensor)>,
         epochs: usize,
         batch_size: usize,
     ) -> Result<(History, Option<History>), NeuralNetworkError> {
@@ -182,16 +207,15 @@ impl Sequential {
 
         let mut train_history = History::new();
         let mut validation_history = validation_data.map(|_| History::new());
-
-        let batches = Self::create_batches(x_train, y_train, batch_size);
+        let batches = Self::create_batches(x_train, y_train, batch_size)?;
 
         for e in 0..epochs {
-            debug!("Training epochs : {}", e);
+            debug!("Training epoch: {}", e);
             let epoch_result = self.process_epoch(&batches)?;
             train_history.history.push(epoch_result);
 
             if let Some((x_val, y_val)) = validation_data {
-                let validation_bench = self.evaluate((x_val, y_val), batch_size);
+                let validation_bench = self.evaluate((x_val, y_val), batch_size)?;
                 validation_history
                     .as_mut()
                     .unwrap()
@@ -203,92 +227,100 @@ impl Sequential {
         Ok((train_history, validation_history))
     }
 
+    /// Process one training epoch
     fn process_epoch(
         &mut self,
-        batches: &[(ArrayD<f64>, ArrayD<f64>)],
+        batches: &[(Tensor, Tensor)],
     ) -> Result<Benchmark, NeuralNetworkError> {
-        let metrics: Metrics = self
+        let metrics = self
             .metrics
             .clone()
-            .expect("Metrics must be set before calling train");
-        let mut bench: Benchmark = Benchmark::new(metrics);
-        let mut total_loss: f64 = 0.0;
+            .expect("Metrics must be set before training");
+        let mut bench = Benchmark::new(metrics);
+        let mut total_loss = 0.0;
+
+        // Get network device from first layer
+        let network_device = self.get_device();
 
         for (batched_x, batched_y) in batches.iter() {
-            let output: ArrayD<f64> = self.feed_forward(batched_x)?;
-            let batch_loss: f64 = self.cost_function.cost(&output, batched_y);
+            // Transfer batch to network device if needed
+            let batch_x_device = batched_x.to_device(network_device.clone())?;
+            let batch_y_device = batched_y.to_device(network_device.clone())?;
 
+            let output = self.feed_forward(&batch_x_device)?;
+            let batch_loss = self.cost_function.cost(&output, &batch_y_device)?;
             total_loss += batch_loss;
-
-            bench.metrics.accumulate(&output, batched_y);
-            self.backpropagation(&output, batched_y)?;
+            bench.metrics.accumulate(&output, &batch_y_device)?;
+            self.backpropagation(&output, &batch_y_device)?;
         }
 
         bench.metrics.finalize();
         bench.loss = total_loss / batches.len() as f64;
-
         Ok(bench)
     }
 
+    /// Create batches from training data with shuffling
+    ///
+    /// # Arguments
+    /// * `x_train` - Training features tensor, shape: [n_samples, n_features]
+    /// * `y_train` - Training labels tensor, shape: [n_samples, n_classes]
+    /// * `batch_size` - Size of each batch
     fn create_batches(
-        x_train: &ArrayD<f64>,
-        y_train: &ArrayD<f64>,
+        x_train: &Tensor,
+        y_train: &Tensor,
         batch_size: usize,
-    ) -> Vec<(ArrayD<f64>, ArrayD<f64>)> {
-        let mut indices = (0..x_train.shape()[0]).collect::<Vec<_>>();
-        let mut rng = thread_rng();
-        indices.shuffle(&mut rng);
-        indices
-            .chunks(batch_size)
-            .map(|batch_indices| {
-                (
-                    x_train.select(Axis(0), batch_indices),
-                    y_train.select(Axis(0), batch_indices),
-                )
-            })
-            .collect::<Vec<_>>()
-    }
+    ) -> Result<Vec<(Tensor, Tensor)>, NeuralNetworkError> {
+        let n_samples = x_train.shape()[0];
 
-    pub fn feed_forward(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
-        let mut output = input.clone();
-        for layer in &mut self.layers {
-            output = layer.feed_forward_save(&output)?;
+        // TODO: Implement proper shuffling by reordering the tensor data
+        // For now, we use sequential batches (no shuffling)
+        let mut batches = Vec::new();
+
+        for start_idx in (0..n_samples).step_by(batch_size) {
+            let end_idx = (start_idx + batch_size).min(n_samples);
+            let batch_x = x_train.slice(0, start_idx..end_idx)?;
+            let batch_y = y_train.slice(0, start_idx..end_idx)?;
+            batches.push((batch_x, batch_y));
         }
-        Ok(output)
+
+        Ok(batches)
     }
 
+    /// Forward pass through all layers with gradient tracking
+    pub fn feed_forward(&mut self, input: &Tensor) -> Result<Tensor, NeuralNetworkError> {
+        let mut current_output = input.clone();
+
+        for layer in &mut self.layers {
+            current_output = layer.feed_forward_save(&current_output)?;
+        }
+
+        Ok(current_output)
+    }
+
+    /// Backpropagation algorithm
+    ///
+    /// # Arguments
+    /// * `net_output` - Network output tensor, shape: [batch_size, n_classes]
+    /// * `observed` - One-hot encoded labels tensor, shape: [batch_size, n_classes]
     fn backpropagation(
         &mut self,
-        net_output: &ArrayD<f64>,
-        observed: &ArrayD<f64>,
+        net_output: &Tensor,
+        observed: &Tensor,
     ) -> Result<(), NeuralNetworkError> {
-        let mut grad = self
+        let mut current_gradient = self
             .cost_function
-            .cost_output_gradient(net_output, observed);
+            .cost_output_gradient(net_output, observed)?;
 
-        // if the cost function is dependant of the last layer, the gradient calculation
-        // have been done with respect to the net logits directly, thus skip the last layer
-        // in the gradients backpropagation
-        let skip_layer = if self.cost_function.is_output_dependant() {
-            1
-        } else {
-            0
-        };
+        for layer in self.layers.iter_mut().rev() {
+            current_gradient = layer.propagate_backward(&current_gradient)?;
+        }
 
-        for layer in self.layers.iter_mut().rev().skip(skip_layer) {
-            grad = layer.propagate_backward(&grad)?;
-
-            // Downcast to Trainable and call optimizes step method if possible
-            // is other layers (like convolutional implement trainable, need to downcast
-            // explicitly)
+        for layer in self.layers.iter_mut() {
             if let Some(trainable_layer) = layer.as_any_mut().downcast_mut::<DenseLayer>() {
                 self.optimizer.step(trainable_layer);
             }
-
-            if let Some(trainable_layer) = layer.as_any_mut().downcast_mut::<ConvolutionalLayer>() {
-                self.optimizer.step(trainable_layer);
-            }
         }
+
         Ok(())
     }
 }

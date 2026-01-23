@@ -1,217 +1,210 @@
-use crate::{error::NeuralNetworkError, tensor::Device};
-
-use std::any::Any;
+use crate::tensor::{
+    backend::{backend_storage::BackendStorage, cpu::CpuDevice},
+    TensorError,
+};
 
 #[derive(PartialEq, Debug, Clone, Default, PartialOrd)]
-pub struct CpuStorage {
-    data: Box<[f32]>,
+pub struct CpuStorage(pub Vec<f32>);
+
+impl BackendStorage for CpuStorage {
+    type Device = CpuDevice;
+
+    fn device(&self) -> &Self::Device {
+        &CpuDevice
+    }
+
+    fn to_cpu_storage(&self) -> Result<CpuStorage, TensorError> {
+        Ok(self.clone())
+    }
+
+    fn add(&self, rhs: &Self) -> Result<Self, TensorError> {
+        let result: Vec<f32> = self
+            .0
+            .iter()
+            .zip(rhs.0.iter())
+            .map(|(a, b)| a + b)
+            .collect();
+        Ok(CpuStorage(result))
+    }
+
+    fn matmul(&self, rhs: &Self, m: usize, k: usize, n: usize) -> Result<Self, TensorError> {
+        if self.0.len() != m * k {
+            return Err(TensorError::DimensionMismatch);
+        }
+        if rhs.0.len() != k * n {
+            return Err(TensorError::DimensionMismatch);
+        }
+
+        let mut result = vec![0.0; m * n];
+
+        for i in 0..m {
+            for j in 0..n {
+                let mut sum = 0.0;
+                for p in 0..k {
+                    sum += self.0[i * k + p] * rhs.0[p * n + j];
+                }
+                result[i * n + j] = sum;
+            }
+        }
+
+        Ok(CpuStorage(result))
+    }
+
+    fn mul(&self, rhs: &Self) -> Result<Self, TensorError> {
+        if self.0.len() != rhs.0.len() {
+            return Err(TensorError::DimensionMismatch);
+        }
+
+        let result: Vec<f32> = self
+            .0
+            .iter()
+            .zip(rhs.0.iter())
+            .map(|(a, b)| a * b)
+            .collect();
+        Ok(CpuStorage(result))
+    }
+
+    fn relu(&self) -> Result<Self, TensorError> {
+        let result: Vec<f32> = self.0.iter().map(|&x| x.max(0.0)).collect();
+        Ok(CpuStorage(result))
+    }
+
+    fn tanh(&self) -> Result<Self, TensorError> {
+        let result: Vec<f32> = self.0.iter().map(|&x| x.tanh()).collect();
+        Ok(CpuStorage(result))
+    }
+
+    fn sigmoid(&self) -> Result<Self, TensorError> {
+        let result: Vec<f32> = self.0.iter().map(|&x| 1.0 / (1.0 + (-x).exp())).collect();
+        Ok(CpuStorage(result))
+    }
+
+    fn softmax(&self, batch_size: usize, vector_size: usize) -> Result<Self, TensorError> {
+        if self.0.len() != batch_size * vector_size {
+            return Err(TensorError::DimensionMismatch);
+        }
+
+        let mut result = vec![0.0; batch_size * vector_size];
+
+        for b in 0..batch_size {
+            let start = b * vector_size;
+            let end = start + vector_size;
+            let row = &self.0[start..end];
+
+            let max_val = row.iter().fold(f32::NEG_INFINITY, |max, &val| max.max(val));
+            let exps: Vec<f32> = row.iter().map(|&x| (x - max_val).exp()).collect();
+            let sum_exps: f32 = exps.iter().sum::<f32>() + 1e-10;
+
+            for (i, &exp_val) in exps.iter().enumerate() {
+                result[start + i] = exp_val / sum_exps;
+            }
+        }
+
+        Ok(CpuStorage(result))
+    }
+
+    fn sub(&self, rhs: &Self) -> Result<Self, TensorError> {
+        if self.0.len() != rhs.0.len() {
+            return Err(TensorError::DimensionMismatch);
+        }
+
+        let result: Vec<f32> = self
+            .0
+            .iter()
+            .zip(rhs.0.iter())
+            .map(|(a, b)| a - b)
+            .collect();
+        Ok(CpuStorage(result))
+    }
+
+    fn mul_scalar(&self, scalar: f32) -> Result<Self, TensorError> {
+        let result: Vec<f32> = self.0.iter().map(|&x| x * scalar).collect();
+        Ok(CpuStorage(result))
+    }
 }
 
-impl CpuStorage {
-    pub fn new(size: usize) -> Self {
-        Self {
-            data: vec![0.0; size].into_boxed_slice(),
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_relu() {
+        let input = CpuStorage(vec![-2.0, -1.0, 0.0, 1.0, 2.0]);
+        let output = input.relu().unwrap();
+        assert_eq!(output.0, vec![0.0, 0.0, 0.0, 1.0, 2.0]);
     }
 
-    pub fn from_vec(data: Vec<f32>) -> Self {
-        Self {
-            data: data.into_boxed_slice(),
-        }
+    #[test]
+    fn test_tanh() {
+        let input = CpuStorage(vec![-1.0, 0.0, 1.0]);
+        let output = input.tanh().unwrap();
+
+        assert!((output.0[0] - (-0.7616)).abs() < 0.001);
+        assert!((output.0[1] - 0.0).abs() < 0.001);
+        assert!((output.0[2] - 0.7616).abs() < 0.001);
     }
 
-    pub fn filled(size: usize, value: f32) -> Self {
-        Self {
-            data: vec![value; size].into_boxed_slice(),
-        }
+    #[test]
+    fn test_sigmoid() {
+        let input = CpuStorage(vec![-2.0, 0.0, 2.0]);
+        let output = input.sigmoid().unwrap();
+
+        assert!((output.0[0] - 0.1192).abs() < 0.001);
+        assert!((output.0[1] - 0.5).abs() < 0.001);
+        assert!((output.0[2] - 0.8808).abs() < 0.001);
     }
 
-    pub fn as_slice(&self) -> &[f32] {
-        &self.data
+    #[test]
+    fn test_softmax() {
+        let input = CpuStorage(vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0]);
+        let output = input.softmax(2, 3).unwrap();
+
+        let sum1: f32 = output.0[0..3].iter().sum();
+        assert!((sum1 - 1.0).abs() < 0.001);
+
+        let sum2: f32 = output.0[3..6].iter().sum();
+        assert!((sum2 - 1.0).abs() < 0.001);
+
+        assert!(output.0[2] > output.0[1]);
+        assert!(output.0[1] > output.0[0]);
     }
 
-    fn as_mut_slice(&mut self) -> &mut [f32] {
-        &mut self.data
+    #[test]
+    fn test_add() {
+        let a = CpuStorage(vec![1.0, 2.0, 3.0]);
+        let b = CpuStorage(vec![4.0, 5.0, 6.0]);
+        let result = a.add(&b).unwrap();
+        assert_eq!(result.0, vec![5.0, 7.0, 9.0]);
     }
 
-    fn to_vec(&self) -> Vec<f32> {
-        self.data.to_vec()
+    #[test]
+    fn test_mul() {
+        let a = CpuStorage(vec![1.0, 2.0, 3.0]);
+        let b = CpuStorage(vec![2.0, 3.0, 4.0]);
+        let result = a.mul(&b).unwrap();
+        assert_eq!(result.0, vec![2.0, 6.0, 12.0]);
+    }
+
+    #[test]
+    fn test_matmul() {
+        let a = CpuStorage(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        let b = CpuStorage(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        let result = a.matmul(&b, 2, 3, 2).unwrap();
+        assert_eq!(result.0, vec![22.0, 28.0, 49.0, 64.0]);
+    }
+
+    #[test]
+    fn test_sub() {
+        let a = CpuStorage(vec![5.0, 7.0, 9.0]);
+        let b = CpuStorage(vec![1.0, 2.0, 3.0]);
+        let result = a.sub(&b).unwrap();
+        assert_eq!(result.0, vec![4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn test_mul_scalar() {
+        let a = CpuStorage(vec![1.0, 2.0, 3.0]);
+        let result = a.mul_scalar(2.5).unwrap();
+        assert_eq!(result.0, vec![2.5, 5.0, 7.5]);
     }
 }
-
-// impl StorageBackend for CpuStorage {
-//     fn len(&self) -> usize {
-//         self.data.len()
-//     }
-//
-//     fn device(&self) -> Device {
-//         Device::CPU
-//     }
-//
-//     fn try_clone(&self) -> Result<Box<dyn StorageBackend>, NeuralNetworkError> {
-//         Ok(Box::new(CpuStorage {
-//             data: self.data.to_vec().into_boxed_slice(),
-//         }))
-//     }
-//
-//     fn to_cpu(&self) -> Result<Vec<f32>, NeuralNetworkError> {
-//         Ok(self.data.to_vec())
-//     }
-//
-//     fn as_any(&self) -> &dyn Any {
-//         self
-//     }
-//
-//     fn as_any_mut(&mut self) -> &mut dyn Any {
-//         self
-//     }
-// }
-//
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//
-//     #[test]
-//     fn test_from_vec() {
-//         let data: Vec<f32> = vec![1.0, 2.0, 3.0];
-//         let storage: CpuStorage = CpuStorage::from_vec(data);
-//         assert_eq!(&*storage.data, &[1.0, 2.0, 3.0]);
-//     }
-//
-//     #[test]
-//     fn test_as_slice() {
-//         let storage: CpuStorage = CpuStorage::from_vec(vec![1.0, 2.0, 3.0]);
-//         assert_eq!(storage.as_slice(), &*storage.data);
-//     }
-//
-//     #[test]
-//     fn test_new() {
-//         let storage: CpuStorage = CpuStorage::new(5);
-//         assert_eq!(&*storage.data, &[0.0, 0.0, 0.0, 0.0, 0.0]);
-//     }
-//
-//     #[test]
-//     fn test_filled() {
-//         let storage: CpuStorage = CpuStorage::filled(4, 3.0);
-//         assert_eq!(&*storage.data, &[3.0, 3.0, 3.0, 3.0]);
-//     }
-//
-//     #[test]
-//     fn test_as_mut_slice() {
-//         let mut storage: CpuStorage = CpuStorage::from_vec(vec![1.0, 2.0, 3.0]);
-//         let slice: &mut [f32] = storage.as_mut_slice();
-//         slice[0] = 10.0;
-//         slice[2] = 30.0;
-//         assert_eq!(&*storage.data, &[10.0, 2.0, 30.0]);
-//     }
-//
-//     #[test]
-//     fn test_to_vec() {
-//         let storage: CpuStorage = CpuStorage::from_vec(vec![1.0, 2.0, 3.0]);
-//         let vec: Vec<f32> = storage.to_vec();
-//         assert_eq!(vec, storage.data.to_vec());
-//     }
-//
-//     #[test]
-//     fn test_to_vec_independence() {
-//         let mut storage: CpuStorage = CpuStorage::from_vec(vec![1.0, 2.0, 3.0]);
-//         let vec1: Vec<f32> = storage.to_vec();
-//         storage.as_mut_slice()[0] = 99.0;
-//         let vec2: Vec<f32> = storage.to_vec();
-//         assert_eq!(vec1, vec![1.0, 2.0, 3.0]);
-//         assert_eq!(vec2, vec![99.0, 2.0, 3.0]);
-//     }
-//
-//     #[test]
-//     fn test_len() {
-//         let storage1: CpuStorage = CpuStorage::from_vec(vec![1.0, 2.0, 3.0]);
-//         let storage2: CpuStorage = CpuStorage::from_vec(vec![]);
-//         let storage3: CpuStorage = CpuStorage::from_vec(vec![5.0; 10]);
-//         assert_eq!(storage1.len(), storage1.data.len());
-//         assert_eq!(storage2.len(), storage2.data.len());
-//         assert_eq!(storage3.len(), storage3.data.len());
-//     }
-//
-//     #[test]
-//     fn test_device() {
-//         let storage: CpuStorage = CpuStorage::from_vec(vec![1.0]);
-//         assert_eq!(storage.device(), Device::CPU);
-//     }
-//
-//     #[test]
-//     fn test_is_empty() {
-//         let empty: CpuStorage = CpuStorage::from_vec(vec![]);
-//         let non_empty: CpuStorage = CpuStorage::from_vec(vec![1.0]);
-//         assert!(empty.is_empty());
-//         assert!(!non_empty.is_empty());
-//     }
-//
-//     #[test]
-//     fn test_to_cpu() {
-//         let storage: CpuStorage = CpuStorage::from_vec(vec![1.5, 2.5, 3.5]);
-//         let result: Result<Vec<f32>, NeuralNetworkError> = storage.to_cpu();
-//         assert!(result.is_ok());
-//         assert_eq!(result.unwrap(), storage.data.to_vec());
-//     }
-//
-//     #[test]
-//     fn test_to_cpu_empty() {
-//         let storage: CpuStorage = CpuStorage::from_vec(vec![]);
-//         let result: Result<Vec<f32>, NeuralNetworkError> = storage.to_cpu();
-//         assert!(result.is_ok());
-//         assert_eq!(result.unwrap(), Vec::<f32>::new());
-//     }
-//
-//     #[test]
-//     fn test_try_clone() {
-//         let mut original: CpuStorage = CpuStorage::from_vec(vec![1.0, 2.0, 3.0]);
-//         let result: Result<Box<dyn StorageBackend>, NeuralNetworkError> = original.try_clone();
-//         assert!(result.is_ok());
-//
-//         let cloned: Box<dyn StorageBackend> = result.unwrap();
-//         assert_eq!(cloned.to_cpu().unwrap(), original.data.to_vec());
-//
-//         original.as_mut_slice()[0] = 99.0;
-//         assert_eq!(cloned.to_cpu().unwrap(), vec![1.0, 2.0, 3.0]);
-//         assert_eq!(original.data[0], 99.0);
-//     }
-//
-//     #[test]
-//     fn test_clone() {
-//         let original: CpuStorage = CpuStorage::from_vec(vec![1.0, 2.0, 3.0]);
-//         let cloned: CpuStorage = original.clone();
-//         assert_eq!(original, cloned);
-//         assert_eq!(&*original.data, &*cloned.data);
-//     }
-//
-//     #[test]
-//     fn test_partial_eq() {
-//         let storage1: CpuStorage = CpuStorage::from_vec(vec![1.0, 2.0, 3.0]);
-//         let storage2: CpuStorage = CpuStorage::from_vec(vec![1.0, 2.0, 3.0]);
-//         let storage3: CpuStorage = CpuStorage::from_vec(vec![1.0, 2.0, 4.0]);
-//         assert_eq!(storage1, storage2);
-//         assert_ne!(storage1, storage3);
-//     }
-//
-//     #[test]
-//     fn test_large_storage() {
-//         let storage: CpuStorage = CpuStorage::new(1_000_000);
-//         assert_eq!(storage.data.len(), 1_000_000);
-//     }
-//
-//     #[test]
-//     fn test_special_floats() {
-//         let storage: CpuStorage = CpuStorage::from_vec(vec![
-//             f32::INFINITY,
-//             f32::NEG_INFINITY,
-//             f32::NAN,
-//             f32::MIN,
-//             f32::MAX,
-//         ]);
-//         assert_eq!(storage.data[0], f32::INFINITY);
-//         assert_eq!(storage.data[1], f32::NEG_INFINITY);
-//         assert!(storage.data[2].is_nan());
-//         assert_eq!(storage.data[3], f32::MIN);
-//         assert_eq!(storage.data[4], f32::MAX);
-//     }
-// }

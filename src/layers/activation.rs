@@ -1,16 +1,16 @@
-use ndarray::ArrayD;
 use std::any::Any;
 
 use crate::activation::Activation;
+use crate::tensor::Tensor;
 
-use crate::error::NeuralNetworkError;
 use super::Layer;
+use crate::error::NeuralNetworkError;
 
 /// The `ActivationLayer` apply a activation function to it's input node to yield the output nodes.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone)]
 pub struct ActivationLayer {
     pub activation: Activation,
-    pub input: Option<ArrayD<f64>>,
+    pub input: Option<Tensor>,
 }
 
 impl ActivationLayer {
@@ -27,7 +27,7 @@ impl Layer for ActivationLayer {
     ///
     /// # Arguments
     /// * `input` - shape (n, i)
-    fn feed_forward_save(&mut self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
+    fn feed_forward_save(&mut self, input: &Tensor) -> Result<Tensor, NeuralNetworkError> {
         self.input = Some(input.clone());
         self.feed_forward(input)
     }
@@ -37,8 +37,8 @@ impl Layer for ActivationLayer {
     ///
     /// # Arguments
     /// * `input` - shape (n, i)
-    fn feed_forward(&self, input: &ArrayD<f64>) -> Result<ArrayD<f64>, NeuralNetworkError> {
-        Ok(self.activation.apply(input))
+    fn feed_forward(&self, input: &Tensor) -> Result<Tensor, NeuralNetworkError> {
+        Ok(self.activation.apply_tensor(input)?)
     }
 
     /// Return the input gradient (shape (n, i)) of this `ActivationLayer` by processing the output gradient.
@@ -46,13 +46,21 @@ impl Layer for ActivationLayer {
     /// * `output_gradient` shape (n, j)
     fn propagate_backward(
         &mut self,
-        output_gradient: &ArrayD<f64>,
-    ) -> Result<ArrayD<f64>, NeuralNetworkError> {
-        let input_gradient = match self.input.as_ref() {
-            Some(input) => Ok(output_gradient * self.activation.apply_derivative(input)),
+        output_gradient: &Tensor,
+    ) -> Result<Tensor, NeuralNetworkError> {
+        // Pour Softmax + CrossEntropy, le gradient est déjà calculé correctement
+        // dans la fonction de coût, donc on le passe tel quel
+        if self.activation == Activation::Softmax {
+            return Ok(output_gradient.clone());
+        }
+
+        match self.input.as_ref() {
+            Some(input) => {
+                let derivative = self.activation.apply_derivative_tensor(input)?;
+                Ok(output_gradient.clone() * derivative)
+            }
             None => Err(NeuralNetworkError::IllegalInputAccess),
-        };
-        input_gradient
+        }
     }
 
     fn as_any(&self) -> &dyn Any {

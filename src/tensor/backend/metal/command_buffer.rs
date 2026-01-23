@@ -1,12 +1,15 @@
-use std::sync::Arc;
+use std::{borrow::Cow, ffi::CStr, sync::Arc};
 
 use objc2::{rc::Retained, runtime::ProtocolObject};
-use objc2_metal::MTLCommandBuffer;
+use objc2_foundation::NSString;
+use objc2_metal::{MTLCommandBuffer, MTLCommandBufferStatus};
 
 use crate::tensor::backend::metal::{
-    command_semaphore::CommandSemaphore, compute_command_encoder::ComputeCommandEncoder,
+    command_semaphore::CommandSemaphore,
+    encoder::{BlitCommandEncoder, ComputeCommandEncoder},
 };
 
+#[derive(Debug)]
 pub struct CommandBuffer {
     raw: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     semaphore: Arc<CommandSemaphore>,
@@ -28,6 +31,43 @@ impl CommandBuffer {
             .computeCommandEncoder()
             .map(|raw| ComputeCommandEncoder::new(raw, Arc::clone(&self.semaphore)))
             .unwrap()
+    }
+
+    pub fn blit_command_encoder(&self) -> BlitCommandEncoder {
+        self.as_ref()
+            .blitCommandEncoder()
+            .map(|raw| BlitCommandEncoder::new(raw, Arc::clone(&self.semaphore)))
+            .unwrap()
+    }
+
+    pub fn commit(&self) {
+        self.raw.commit()
+    }
+
+    pub fn enqueue(&self) {
+        self.raw.enqueue()
+    }
+
+    pub fn set_label(&self, label: &str) {
+        self.as_ref().setLabel(Some(&NSString::from_str(label)));
+    }
+
+    pub fn status(&self) -> MTLCommandBufferStatus {
+        self.raw.status()
+    }
+
+    pub fn error(&self) -> Option<Cow<'_, str>> {
+        unsafe {
+            self.raw.error().map(|error| {
+                let description = error.localizedDescription();
+                let c_str = CStr::from_ptr(description.UTF8String());
+                c_str.to_string_lossy()
+            })
+        }
+    }
+
+    pub fn wait_until_completed(&self) {
+        self.raw.waitUntilCompleted();
     }
 }
 
