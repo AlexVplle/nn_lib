@@ -2,7 +2,7 @@ use std::hash::Hash;
 
 use objc2_metal::MTLDataType;
 
-#[derive(PartialEq, Debug, Clone, Copy, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialOrd)]
 pub enum Value {
     USize(usize),
     Bool(bool),
@@ -17,6 +17,20 @@ impl Hash for Value {
             Value::Bool(v) => v.hash(state),
             Value::F32(v) => v.to_bits().hash(state),
             Value::U16(v) => v.hash(state),
+        }
+    }
+}
+
+impl Eq for Value {}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::USize(a), Value::USize(b)) => a == b,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::F32(a), Value::F32(b)) => a.to_bits() == b.to_bits(),
+            (Value::U16(a), Value::U16(b)) => a == b,
+            _ => false,
         }
     }
 }

@@ -152,6 +152,32 @@ impl MetalDevice {
         subbuffers.push(new_buffer.clone());
         Ok(new_buffer)
     }
+
+    pub fn storage_from_slice(&self, data: &[u32]) -> Result<Arc<Buffer>, MetalError> {
+        let size: usize = data.len() * std::mem::size_of::<u32>();
+        let new_buffer: Buffer = self.device.new_buffer_with_data(
+            data.as_ptr().cast(),
+            size,
+            MTLResourceOptions::StorageModeShared,
+        )?;
+        let mut buffers = self
+            .buffers
+            .write()
+            .map_err(|_| MetalError::BufferLockFailed("buffer map".to_string()))?;
+        let subbuffers = buffers.entry(size).or_insert(vec![]);
+        let buffer_arc: Arc<Buffer> = Arc::new(new_buffer);
+        subbuffers.push(buffer_arc.clone());
+        Ok(buffer_arc)
+    }
+
+    pub fn get_or_create_pipeline(
+        &self,
+        source: source::Source,
+        function_name: &str,
+    ) -> Result<compute_pipeline::ComputePipeline, MetalError> {
+        let library = self.kernels.get_or_create_library(&self.device, source)?;
+        self.kernels.get_or_create_pipeline(&self.device, function_name, &library, None)
+    }
 }
 
 impl BackendDevice for MetalDevice {

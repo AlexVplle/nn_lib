@@ -55,12 +55,20 @@ impl Storage {
         }
     }
 
-    pub fn matmul(&self, rhs: &Self, m: usize, k: usize, n: usize) -> Result<Self, TensorError> {
+    pub fn matmul(
+        &self,
+        rhs: &Self,
+        m: usize,
+        k: usize,
+        n: usize,
+        lhs_strides: &[usize],
+        rhs_strides: &[usize],
+    ) -> Result<Self, TensorError> {
         self.same_device(rhs)?;
         match (self, rhs) {
-            (Storage::Cpu(lhs), Storage::Cpu(rhs)) => Ok(Storage::Cpu(lhs.matmul(rhs, m, k, n)?)),
+            (Storage::Cpu(lhs), Storage::Cpu(rhs)) => Ok(Storage::Cpu(lhs.matmul(rhs, m, k, n, lhs_strides, rhs_strides)?)),
             (Storage::Metal(lhs), Storage::Metal(rhs)) => {
-                Ok(Storage::Metal(lhs.matmul(rhs, m, k, n)?))
+                Ok(Storage::Metal(lhs.matmul(rhs, m, k, n, lhs_strides, rhs_strides)?))
             }
             _ => Err(TensorError::DeviceMismatch {
                 first: self.device(),
@@ -127,6 +135,29 @@ impl Storage {
         match self {
             Storage::Cpu(storage) => Ok(Storage::Cpu(storage.mul_scalar(scalar)?)),
             Storage::Metal(storage) => Ok(Storage::Metal(storage.mul_scalar(scalar)?)),
+        }
+    }
+
+    pub fn sum_axis(
+        &self,
+        axis: usize,
+        input_shape: &[usize],
+        output_shape: &[usize],
+    ) -> Result<Self, TensorError> {
+        match self {
+            Storage::Cpu(storage) => Ok(Storage::Cpu(storage.sum_axis(axis, input_shape, output_shape)?)),
+            Storage::Metal(storage) => Ok(Storage::Metal(storage.sum_axis(axis, input_shape, output_shape)?)),
+        }
+    }
+
+    pub fn copy_strided(
+        &self,
+        shape: &[usize],
+        strides: &[usize],
+    ) -> Result<Self, TensorError> {
+        match self {
+            Storage::Cpu(storage) => Ok(Storage::Cpu(storage.copy_strided(shape, strides)?)),
+            Storage::Metal(storage) => Ok(Storage::Metal(storage.copy_strided(shape, strides)?)),
         }
     }
 }

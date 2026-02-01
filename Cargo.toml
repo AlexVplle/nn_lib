@@ -22,3 +22,11 @@ cubecl-reduce = "0.8.1"
 objc2-metal = "0.3.2"
 objc2 = "0.6.3"
 objc2-foundation = "0.3.2"
+
+[dev-dependencies]
+anyhow = "1.0"
+flate2 = "1.0"
+byteorder = "1.5"
+
+[features]
+metal = []

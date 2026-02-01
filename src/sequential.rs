@@ -242,8 +242,7 @@ impl Sequential {
         // Get network device from first layer
         let network_device = self.get_device();
 
-        for (batched_x, batched_y) in batches.iter() {
-            // Transfer batch to network device if needed
+        for (_idx, (batched_x, batched_y)) in batches.iter().enumerate() {
             let batch_x_device = batched_x.to_device(network_device.clone())?;
             let batch_y_device = batched_y.to_device(network_device.clone())?;
 
@@ -251,6 +250,7 @@ impl Sequential {
             let batch_loss = self.cost_function.cost(&output, &batch_y_device)?;
             total_loss += batch_loss;
             bench.metrics.accumulate(&output, &batch_y_device)?;
+
             self.backpropagation(&output, &batch_y_device)?;
         }
 

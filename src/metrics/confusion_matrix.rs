@@ -24,7 +24,18 @@ impl ConfusionMatrix {
         let mut matrix: Vec<Vec<usize>> = vec![vec![0; number_of_class]; number_of_class];
 
         let predicted_classes: ArrayD<usize> =
-            predictions.map_axis(Axis(1), |probabilities| probabilities.argmax().unwrap());
+            predictions.map_axis(Axis(1), |probabilities| {
+                match probabilities.argmax() {
+                    Ok(idx) => idx,
+                    Err(e) => {
+                        eprintln!("argmax failed on probabilities: {:?}", probabilities);
+                        eprintln!("Error: {:?}", e);
+                        eprintln!("Has NaN: {}", probabilities.iter().any(|x| x.is_nan()));
+                        eprintln!("Has Inf: {}", probabilities.iter().any(|x| x.is_infinite()));
+                        panic!("argmax failed: {:?}", e);
+                    }
+                }
+            });
         let true_classes: ArrayD<usize> =
             observed.map_axis(Axis(1), |one_hot| one_hot.argmax().unwrap());
 

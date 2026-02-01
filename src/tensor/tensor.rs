@@ -59,6 +59,29 @@ impl Tensor {
         })))
     }
 
+    pub fn is_contiguous(&self) -> bool {
+        self.layout.is_contiguous()
+    }
+
+    pub fn contiguous(&self) -> Result<Self, TensorError> {
+        if self.is_contiguous() {
+            return Ok(self.clone());
+        }
+
+        let shape = self.shape().to_vec();
+        let strides = self.layout.strides();
+        let storage = self.storage();
+        let new_storage = storage.copy_strided(&shape, strides)?;
+
+        Ok(Self(Arc::new(Tensor_ {
+            storage: Arc::new(RwLock::new(Box::new(new_storage))),
+            layout: crate::tensor::Layout::new(shape),
+            device: self.device.clone(),
+            gradient: None,
+            require_gradient: self.require_gradient,
+        })))
+    }
+
     pub fn transpose(&self) -> Result<Self, TensorError> {
         if self.ndim() != 2 {
             return Err(TensorError::InvalidDimension {
@@ -138,10 +161,6 @@ impl Tensor {
         self.layout.strides()
     }
 
-    pub fn is_contiguous(&self) -> bool {
-        self.layout.is_contiguous()
-    }
-
     pub fn ndim(&self) -> usize {
         self.layout.ndim()
     }
@@ -151,9 +170,16 @@ impl Tensor {
     }
 
     pub fn to_vec(&self) -> Result<Vec<f32>, TensorError> {
-        let storage = self.storage();
-        let cpu_storage = storage.to_cpu_storage()?;
-        Ok(cpu_storage.0)
+        if self.is_contiguous() {
+            let storage = self.storage();
+            let cpu_storage = storage.to_cpu_storage()?;
+            Ok(cpu_storage.0)
+        } else {
+            let contiguous = self.contiguous()?;
+            let storage = contiguous.storage();
+            let cpu_storage = storage.to_cpu_storage()?;
+            Ok(cpu_storage.0)
+        }
     }
 
     /// Transfer tensor to a different device
@@ -277,24 +303,45 @@ impl Tensor {
             return Err(TensorError::DimensionMismatch);
         }
 
-        let m = self.shape()[0];
-        let k = self.shape()[1];
-        let k_rhs = rhs.shape()[0];
-        let n = rhs.shape()[1];
-
-        if k != k_rhs {
-            return Err(TensorError::DimensionMismatch);
-        }
-
         let lhs_storage = self.storage();
         let rhs_storage = rhs.storage();
+        let lhs_strides = self.layout.strides();
+        let rhs_strides = rhs.layout.strides();
         let result_storage = lhs_storage
-            .matmul(&*rhs_storage, m, k, n)
+            .matmul(&*rhs_storage, m, k, n, lhs_strides, rhs_strides)
             .unwrap_or_else(|e| panic!("Tensor matmul failed: {}", e));
 
         Ok(Tensor(Arc::new(Tensor_ {
             storage: Arc::new(RwLock::new(Box::new(result_storage))),
             layout: Layout::new(vec![m, n]),
+            device: self.device.clone(),
+            gradient: None,
+            require_gradient: false,
+        })))
+    }
+
+    pub fn sum_axis(&self, axis: usize) -> Result<Self, TensorError> {
+        if axis >= self.ndim() {
+            return Err(TensorError::InvalidDimension {
+                got: axis,
+                max_dimension: self.ndim(),
+            });
+        }
+
+        let input_shape: &[usize] = self.shape();
+        let mut output_shape: Vec<usize> = Vec::with_capacity(input_shape.len() - 1);
+        for (i, &dim) in input_shape.iter().enumerate() {
+            if i != axis {
+                output_shape.push(dim);
+            }
+        }
+
+        let storage = self.storage();
+        let result_storage = storage.sum_axis(axis, input_shape, &output_shape)?;
+
+        Ok(Tensor(Arc::new(Tensor_ {
+            storage: Arc::new(RwLock::new(Box::new(result_storage))),
+            layout: Layout::new(output_shape),
             device: self.device.clone(),
             gradient: None,
             require_gradient: false,

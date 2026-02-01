@@ -31,6 +31,7 @@ impl Metrics {
 
         let pred_arr: ArrayD<f64> = pred_cpu.into();
         let obs_arr: ArrayD<f64> = obs_cpu.into();
+
         self.accumulate_internal(&pred_arr, &obs_arr);
         Ok(())
     }

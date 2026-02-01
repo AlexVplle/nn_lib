@@ -41,6 +41,14 @@ impl DenseLayer {
             output_size,
         })
     }
+
+    pub fn set_weights(&mut self, weights: Tensor) {
+        self.weights = weights;
+    }
+
+    pub fn set_bias(&mut self, bias: Tensor) {
+        self.bias = bias;
+    }
 }
 
 impl Layer for DenseLayer {
@@ -88,7 +96,8 @@ impl Layer for DenseLayer {
                 let weights_gradient = input_t.matmul(output_gradient)?;
                 self.weights_gradient = Some(weights_gradient);
 
-                self.biases_gradient = Some(output_gradient.clone());
+                let biases_gradient = output_gradient.sum_axis(0)?;
+                self.biases_gradient = Some(biases_gradient);
 
                 let input_gradient = output_gradient.matmul(&weights_t)?;
                 Ok(input_gradient)

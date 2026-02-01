@@ -27,21 +27,29 @@ impl BackendStorage for CpuStorage {
         Ok(CpuStorage(result))
     }
 
-    fn matmul(&self, rhs: &Self, m: usize, k: usize, n: usize) -> Result<Self, TensorError> {
-        if self.0.len() != m * k {
-            return Err(TensorError::DimensionMismatch);
-        }
-        if rhs.0.len() != k * n {
-            return Err(TensorError::DimensionMismatch);
-        }
+    fn matmul(
+        &self,
+        rhs: &Self,
+        m: usize,
+        k: usize,
+        n: usize,
+        lhs_strides: &[usize],
+        rhs_strides: &[usize],
+    ) -> Result<Self, TensorError> {
+        let mut result: Vec<f32> = vec![0.0; m * n];
 
-        let mut result = vec![0.0; m * n];
+        let lhs_row_stride: usize = lhs_strides[0];
+        let lhs_col_stride: usize = lhs_strides[1];
+        let rhs_row_stride: usize = rhs_strides[0];
+        let rhs_col_stride: usize = rhs_strides[1];
 
         for i in 0..m {
             for j in 0..n {
-                let mut sum = 0.0;
+                let mut sum: f32 = 0.0;
                 for p in 0..k {
-                    sum += self.0[i * k + p] * rhs.0[p * n + j];
+                    let lhs_idx: usize = i * lhs_row_stride + p * lhs_col_stride;
+                    let rhs_idx: usize = p * rhs_row_stride + j * rhs_col_stride;
+                    sum += self.0[lhs_idx] * rhs.0[rhs_idx];
                 }
                 result[i * n + j] = sum;
             }
@@ -121,6 +129,111 @@ impl BackendStorage for CpuStorage {
         let result: Vec<f32> = self.0.iter().map(|&x| x * scalar).collect();
         Ok(CpuStorage(result))
     }
+
+    fn sum_axis(
+        &self,
+        axis: usize,
+        input_shape: &[usize],
+        output_shape: &[usize],
+    ) -> Result<Self, TensorError> {
+        if axis >= input_shape.len() {
+            return Err(TensorError::InvalidDimension {
+                got: axis,
+                max_dimension: input_shape.len(),
+            });
+        }
+
+        let mut input_strides: Vec<usize> = vec![1; input_shape.len()];
+        for i in (0..input_shape.len() - 1).rev() {
+            input_strides[i] = input_strides[i + 1] * input_shape[i + 1];
+        }
+
+        let mut output_strides: Vec<usize> = vec![1; output_shape.len()];
+        if !output_shape.is_empty() {
+            for i in (0..output_shape.len() - 1).rev() {
+                output_strides[i] = output_strides[i + 1] * output_shape[i + 1];
+            }
+        }
+
+        let output_size: usize = if output_shape.is_empty() {
+            1
+        } else {
+            output_shape.iter().product()
+        };
+        let axis_size: usize = input_shape[axis];
+
+        let mut result: Vec<f32> = vec![0.0; output_size];
+
+        for out_idx in 0..output_size {
+            let mut out_indices: Vec<usize> = vec![0; output_shape.len()];
+            let mut remaining: usize = out_idx;
+            for (i, &stride) in output_strides.iter().enumerate() {
+                out_indices[i] = remaining / stride;
+                remaining %= stride;
+            }
+
+            let mut input_indices: Vec<usize> = Vec::with_capacity(input_shape.len());
+            let mut out_pos: usize = 0;
+            for i in 0..input_shape.len() {
+                if i == axis {
+                    input_indices.push(0);
+                } else {
+                    input_indices.push(out_indices[out_pos]);
+                    out_pos += 1;
+                }
+            }
+
+            for axis_idx in 0..axis_size {
+                input_indices[axis] = axis_idx;
+
+                let mut in_idx: usize = 0;
+                for (i, &idx) in input_indices.iter().enumerate() {
+                    in_idx += idx * input_strides[i];
+                }
+
+                result[out_idx] += self.0[in_idx];
+            }
+        }
+
+        Ok(CpuStorage(result))
+    }
+
+    fn copy_strided(
+        &self,
+        shape: &[usize],
+        strides: &[usize],
+    ) -> Result<Self, TensorError> {
+        let total_size: usize = shape.iter().product();
+        let mut result: Vec<f32> = Vec::with_capacity(total_size);
+
+        fn copy_recursive(
+            data: &[f32],
+            shape: &[usize],
+            strides: &[usize],
+            indices: &mut Vec<usize>,
+            dim: usize,
+            out: &mut Vec<f32>,
+        ) {
+            if dim == shape.len() {
+                let mut offset: usize = 0;
+                for (i, &stride) in strides.iter().enumerate() {
+                    offset += indices[i] * stride;
+                }
+                out.push(data[offset]);
+                return;
+            }
+
+            for i in 0..shape[dim] {
+                indices[dim] = i;
+                copy_recursive(data, shape, strides, indices, dim + 1, out);
+            }
+        }
+
+        let mut indices: Vec<usize> = vec![0; shape.len()];
+        copy_recursive(&self.0, shape, strides, &mut indices, 0, &mut result);
+
+        Ok(CpuStorage(result))
+    }
 }
 
 #[cfg(test)]
@@ -189,7 +302,7 @@ mod tests {
     fn test_matmul() {
         let a = CpuStorage(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
         let b = CpuStorage(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
-        let result = a.matmul(&b, 2, 3, 2).unwrap();
+        let result = a.matmul(&b, 2, 3, 2, &[3, 1], &[2, 1]).unwrap();
         assert_eq!(result.0, vec![22.0, 28.0, 49.0, 64.0]);
     }
 
@@ -206,5 +319,14 @@ mod tests {
         let a = CpuStorage(vec![1.0, 2.0, 3.0]);
         let result = a.mul_scalar(2.5).unwrap();
         assert_eq!(result.0, vec![2.5, 5.0, 7.5]);
+    }
+
+    #[test]
+    fn test_sum_axis() {
+        let a: CpuStorage = CpuStorage(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        let input_shape: &[usize] = &[2, 3];
+        let output_shape: &[usize] = &[3];
+        let result: CpuStorage = a.sum_axis(0, input_shape, output_shape).unwrap();
+        assert_eq!(result.0, vec![5.0, 7.0, 9.0]);
     }
 }

@@ -95,7 +95,7 @@ impl CostFunction {
             Self::CrossEntropy => &output_arr - &observed_arr,
             Self::BinaryCrossEntropy => &output_arr - &observed_arr,
             Self::Mse => {
-                let batch_size = output_arr.shape()[0];
+                let batch_size: usize = output_arr.shape()[0];
                 2.0 * (&output_arr - &observed_arr) / batch_size as f64
             }
         };

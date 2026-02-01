@@ -2,7 +2,7 @@ use crate::tensor::backend::metal::{
     function_constant_values::FunctionConstantValues, value::Value,
 };
 
-#[derive(PartialEq, Debug, Clone, Hash)]
+#[derive(PartialEq, Eq, Debug, Clone, Hash)]
 pub struct ConstantValues(Vec<(usize, Value)>);
 
 impl ConstantValues {
