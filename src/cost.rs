@@ -34,7 +34,6 @@ impl CostFunction {
     /// # Returns
     /// * `Result<f64, NeuralNetworkError>` - Mean cost over the batch
     pub fn cost(&self, output: &Tensor, observed: &Tensor) -> Result<f64, NeuralNetworkError> {
-        // Convert tensors to ArrayD for computation
         let output_arr: ArrayD<f64> = output.clone().into();
         let observed_arr: ArrayD<f64> = observed.clone().into();
 
@@ -87,7 +86,6 @@ impl CostFunction {
         output: &Tensor,
         observed: &Tensor,
     ) -> Result<Tensor, NeuralNetworkError> {
-        // Convert tensors to ArrayD for computation
         let output_arr: ArrayD<f64> = output.clone().into();
         let observed_arr: ArrayD<f64> = observed.clone().into();
 
@@ -100,7 +98,6 @@ impl CostFunction {
             }
         };
 
-        // Convert gradient back to Tensor on the correct device
         let data: Vec<f32> = gradient_arr.iter().map(|&x| x as f32).collect();
         let shape = gradient_arr.shape().to_vec();
         Ok(Tensor::new(data, shape, output.device().clone())?)

@@ -65,7 +65,7 @@ fn main() -> anyhow::Result<()> {
         .push(DenseLayer::new(128, 10, InitializerType::He, device)?)
         .push(ActivationLayer::from(Activation::Softmax))
         .with_metrics(metrics)
-        .compile(GradientDescent::new(0.01), CostFunction::CrossEntropy)?;
+        .compile(GradientDescent::new(0.1), CostFunction::CrossEntropy)?;
 
     println!("\nTraining for 10 epochs (batch size: 128)...\n");
     let start = std::time::Instant::now();
@@ -116,8 +116,6 @@ fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
-
-// MNIST data loading
 
 fn load_dataset() -> anyhow::Result<MnistData> {
     let (training_images, training_labels) = (

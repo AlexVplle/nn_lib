@@ -111,25 +111,19 @@ impl Tensor {
     }
 
     pub fn slice(&self, dimension: usize, range: Range<usize>) -> Result<Self, TensorError> {
-        // For 2D tensors with row-slicing on dimension 0, create a contiguous copy
-        // This is necessary because matmul and other ops expect contiguous storage
         let old_shape = self.shape();
 
         if old_shape.len() == 2 && dimension == 0 {
-            // Slicing rows - this is the common case for batching
             let row_size = old_shape[1];
             let num_rows = range.end - range.start;
             let new_shape = vec![num_rows, row_size];
 
-            // Check for overflow before allocating
             let total_size = num_rows
                 .checked_mul(row_size)
                 .ok_or(TensorError::DimensionMismatch)?;
 
-            // Get data once
             let old_data = self.to_vec()?;
 
-            // Extract the sliced rows
             let mut new_data = Vec::with_capacity(total_size);
             for i in range.start..range.end {
                 let start_idx = i * row_size;
@@ -139,9 +133,6 @@ impl Tensor {
 
             Self::new(new_data, new_shape, self.device.clone())
         } else {
-            // General case (less efficient but correct)
-            // This is more complex, for now we'll handle only the row-slicing case
-            // which is what we need for batching
             Err(TensorError::InvalidDimension {
                 got: dimension,
                 max_dimension: 0,
@@ -184,12 +175,10 @@ impl Tensor {
 
     /// Transfer tensor to a different device
     pub fn to_device(&self, target_device: Device) -> Result<Self, TensorError> {
-        // If already on target device, return clone
         if self.device.same_device(&target_device) {
             return Ok(self.clone());
         }
 
-        // Transfer via CPU
         let data = self.to_vec()?;
         let shape = self.shape().to_vec();
 
@@ -373,11 +362,9 @@ impl Mul for Tensor {
     type Output = Self;
 
     fn mul(self, other: Self) -> Self {
-        // Multiplication élément par élément (Hadamard product)
         let lhs_storage = self.storage();
         let rhs_storage = other.storage();
 
-        // Les deux tenseurs doivent avoir la même forme
         assert_eq!(
             self.shape(),
             other.shape(),

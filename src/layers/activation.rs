@@ -48,8 +48,6 @@ impl Layer for ActivationLayer {
         &mut self,
         output_gradient: &Tensor,
     ) -> Result<Tensor, NeuralNetworkError> {
-        // Pour Softmax + CrossEntropy, le gradient est déjà calculé correctement
-        // dans la fonction de coût, donc on le passe tel quel
         if self.activation == Activation::Softmax {
             return Ok(output_gradient.clone());
         }

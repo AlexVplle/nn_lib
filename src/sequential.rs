@@ -8,8 +8,6 @@ use crate::{
     tensor::{Device, Tensor},
 };
 use log::debug;
-use ndarray_rand::rand::seq::SliceRandom;
-use ndarray_rand::rand::thread_rng;
 
 #[derive(Default)]
 pub struct SequentialBuilder {
@@ -45,7 +43,6 @@ impl SequentialBuilder {
         optimizer: impl Optimizer + 'static,
         cost_function: CostFunction,
     ) -> Result<Sequential, NeuralNetworkError> {
-        // Check if the cost function is compatible with the last layer's activation function
         if cost_function.is_output_dependant() {
             self.validate_last_layer_activation(&cost_function)?;
         }
@@ -88,18 +85,6 @@ impl SequentialBuilder {
     }
 }
 
-/// a trainable `NeuralNetwork`
-/// # Fields
-/// * `layers` - A vector of layers (could be activation, convolutional, dense, etc..) in
-/// sequential order
-/// note that this crate dont use autodiff, so if you are planning to use a neural net architecture
-/// with cross entropy, or binary cross entropy, the network make and use the assumption of
-/// softmax, and sigmoid activation function respectively just before the cost function.
-/// Thus you don't need to include it in the layers. However if you use any kind of independent
-/// cost function (like mse) you can include whatever activation function you want after the
-/// output because the gradient calculation is independent of the last layer you choose.
-/// * cost_function - TODO
-/// * optimoizer - TODO
 pub struct Sequential {
     layers: Vec<Box<dyn Layer>>,
     cost_function: CostFunction,
@@ -115,7 +100,6 @@ impl Sequential {
                 return trainable.get_parameters()[0].device().clone();
             }
         }
-        // Fallback to CPU if no trainable layers found
         Device::CPU
     }
 
@@ -162,11 +146,9 @@ impl Sequential {
         let mut total_loss = 0.0;
         let mut batch_count = 0;
 
-        // Get network device
         let network_device = self.get_device();
 
         for (batched_x, batched_y) in batches.into_iter() {
-            // Transfer batch to network device if needed
             let batch_x_device = batched_x.to_device(network_device.clone())?;
             let batch_y_device = batched_y.to_device(network_device.clone())?;
 
@@ -239,7 +221,6 @@ impl Sequential {
         let mut bench = Benchmark::new(metrics);
         let mut total_loss = 0.0;
 
-        // Get network device from first layer
         let network_device = self.get_device();
 
         for (_idx, (batched_x, batched_y)) in batches.iter().enumerate() {
@@ -272,8 +253,6 @@ impl Sequential {
     ) -> Result<Vec<(Tensor, Tensor)>, NeuralNetworkError> {
         let n_samples = x_train.shape()[0];
 
-        // TODO: Implement proper shuffling by reordering the tensor data
-        // For now, we use sequential batches (no shuffling)
         let mut batches = Vec::new();
 
         for start_idx in (0..n_samples).step_by(batch_size) {
@@ -313,9 +292,7 @@ impl Sequential {
 
         for layer in self.layers.iter_mut().rev() {
             current_gradient = layer.propagate_backward(&current_gradient)?;
-        }
 
-        for layer in self.layers.iter_mut() {
             if let Some(trainable_layer) = layer.as_any_mut().downcast_mut::<DenseLayer>() {
                 self.optimizer.step(trainable_layer);
             }

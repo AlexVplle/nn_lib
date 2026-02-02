@@ -73,7 +73,6 @@ impl Layer for DenseLayer {
     /// * `input` - shape (n, i)
     fn feed_forward(&self, input: &Tensor) -> Result<Tensor, NeuralNetworkError> {
         let output = input.matmul(&self.weights)?;
-        // Add bias to each row (broadcast)
         add_bias_to_output(&output, &self.bias)
     }
 
@@ -92,11 +91,14 @@ impl Layer for DenseLayer {
             Some(input) => {
                 let input_t = input.transpose()?;
                 let weights_t = self.weights.transpose()?;
+                let batch_size = output_gradient.shape()[0] as f32;
 
                 let weights_gradient = input_t.matmul(output_gradient)?;
+                let weights_gradient = weights_gradient.mul_scalar(1.0 / batch_size)?;
                 self.weights_gradient = Some(weights_gradient);
 
                 let biases_gradient = output_gradient.sum_axis(0)?;
+                let biases_gradient = biases_gradient.mul_scalar(1.0 / batch_size)?;
                 self.biases_gradient = Some(biases_gradient);
 
                 let input_gradient = output_gradient.matmul(&weights_t)?;

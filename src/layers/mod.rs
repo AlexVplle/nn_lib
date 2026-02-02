@@ -16,7 +16,7 @@ use crate::error::NeuralNetworkError;
 use crate::tensor::Tensor;
 
 /// The `Layer` trait need to be implemented by any nn layer
-//
+///
 /// a layer is defined as input nodes x and output nodes y, and have two main functions,
 /// `feed_forward()` and `propagate_backward()`
 ///

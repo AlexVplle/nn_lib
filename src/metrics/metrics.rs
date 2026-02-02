@@ -24,7 +24,6 @@ impl Metrics {
         predictions: &Tensor,
         observed: &Tensor,
     ) -> Result<(), NeuralNetworkError> {
-        // Transfer to CPU if needed for metrics calculation
         use crate::tensor::Device;
         let pred_cpu = predictions.to_device(Device::CPU)?;
         let obs_cpu = observed.to_device(Device::CPU)?;
@@ -36,7 +35,6 @@ impl Metrics {
         Ok(())
     }
 
-    // Internal method for ArrayD-based accumulation
     fn accumulate_internal(&mut self, predictions: &ArrayD<f64>, observed: &ArrayD<f64>) {
         match self {
             Metrics::MulticlassClassification(metrics) => metrics.accumulate(predictions, observed),
