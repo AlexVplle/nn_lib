@@ -1,6 +1,6 @@
 # nn_lib
 
-A high-performance neural network library written in Rust with support for both CPU and Metal GPU backends.
+Neural network library written in Rust with support for both CPU and Metal GPU backends.
 
 ## Features
 
