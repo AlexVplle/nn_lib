@@ -114,6 +114,10 @@ fn main() -> anyhow::Result<()> {
     }
     println!("Test loss: {:.4}", bench.loss);
 
+    println!("\nSaving model to mnist_model.json...");
+    net.save("mnist_model.json")?;
+    println!("Model saved!");
+
     Ok(())
 }
 

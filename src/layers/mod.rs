@@ -24,7 +24,7 @@ use crate::tensor::Tensor;
 /// data point at once).
 /// The convention chosen in the layer implementations is (n, features) where n is the number of
 /// sample in the batch
-pub trait Layer {
+pub trait Layer: Send + Sync {
     fn feed_forward_save(&mut self, input: &Tensor) -> Result<Tensor, NeuralNetworkError>;
 
     fn feed_forward(&self, input: &Tensor) -> Result<Tensor, NeuralNetworkError>;
@@ -39,7 +39,7 @@ pub trait Layer {
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
-pub trait Trainable {
+pub trait Trainable: Send + Sync {
     fn get_parameters(&self) -> Vec<Tensor>;
 
     fn get_parameters_mut(&mut self) -> Vec<&mut Tensor>;

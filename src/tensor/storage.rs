@@ -1,11 +1,13 @@
 use crate::tensor::backend::backend_storage::BackendStorage;
 use crate::tensor::backend::cpu::CpuStorage;
+#[cfg(feature = "metal")]
 use crate::tensor::backend::metal::storage::MetalStorage;
 use crate::tensor::{Device, TensorError};
 
 #[derive(Debug)]
 pub enum Storage {
     Cpu(CpuStorage),
+    #[cfg(feature = "metal")]
     Metal(MetalStorage),
 }
 
@@ -13,6 +15,8 @@ impl Storage {
     pub fn try_clone(&self) -> Result<Self, TensorError> {
         match self {
             Self::Cpu(storage) => Ok(Self::Cpu(storage.clone())),
+            #[cfg(feature = "metal")]
+            #[cfg(feature = "metal")]
             Self::Metal(storage) => Ok(Self::Metal(storage.clone())),
         }
     }
@@ -20,6 +24,8 @@ impl Storage {
     pub fn device(&self) -> Device {
         match self {
             Self::Cpu(_) => Device::CPU,
+            #[cfg(feature = "metal")]
+            #[cfg(feature = "metal")]
             Self::Metal(storage) => Device::Metal(storage.device().clone()),
         }
     }
@@ -27,6 +33,8 @@ impl Storage {
     pub fn to_cpu_storage(&self) -> Result<CpuStorage, TensorError> {
         match self {
             Self::Cpu(storage) => storage.to_cpu_storage(),
+            #[cfg(feature = "metal")]
+            #[cfg(feature = "metal")]
             Self::Metal(storage) => storage.to_cpu_storage(),
         }
     }
@@ -47,6 +55,7 @@ impl Storage {
         self.same_device(rhs)?;
         match (self, rhs) {
             (Storage::Cpu(lhs), Storage::Cpu(rhs)) => Ok(Storage::Cpu(lhs.add(rhs)?)),
+            #[cfg(feature = "metal")]
             (Storage::Metal(lhs), Storage::Metal(rhs)) => Ok(Storage::Metal(lhs.add(rhs)?)),
             _ => Err(TensorError::DeviceMismatch {
                 first: self.device(),
@@ -67,6 +76,7 @@ impl Storage {
         self.same_device(rhs)?;
         match (self, rhs) {
             (Storage::Cpu(lhs), Storage::Cpu(rhs)) => Ok(Storage::Cpu(lhs.matmul(rhs, m, k, n, lhs_strides, rhs_strides)?)),
+            #[cfg(feature = "metal")]
             (Storage::Metal(lhs), Storage::Metal(rhs)) => {
                 Ok(Storage::Metal(lhs.matmul(rhs, m, k, n, lhs_strides, rhs_strides)?))
             }
@@ -81,6 +91,7 @@ impl Storage {
         self.same_device(rhs)?;
         match (self, rhs) {
             (Storage::Cpu(lhs), Storage::Cpu(rhs)) => Ok(Storage::Cpu(lhs.mul(rhs)?)),
+            #[cfg(feature = "metal")]
             (Storage::Metal(lhs), Storage::Metal(rhs)) => Ok(Storage::Metal(lhs.mul(rhs)?)),
             _ => Err(TensorError::DeviceMismatch {
                 first: self.device(),
@@ -92,6 +103,7 @@ impl Storage {
     pub fn relu(&self) -> Result<Self, TensorError> {
         match self {
             Storage::Cpu(storage) => Ok(Storage::Cpu(storage.relu()?)),
+            #[cfg(feature = "metal")]
             Storage::Metal(storage) => Ok(Storage::Metal(storage.relu()?)),
         }
     }
@@ -99,6 +111,7 @@ impl Storage {
     pub fn tanh(&self) -> Result<Self, TensorError> {
         match self {
             Storage::Cpu(storage) => Ok(Storage::Cpu(storage.tanh()?)),
+            #[cfg(feature = "metal")]
             Storage::Metal(storage) => Ok(Storage::Metal(storage.tanh()?)),
         }
     }
@@ -106,6 +119,7 @@ impl Storage {
     pub fn sigmoid(&self) -> Result<Self, TensorError> {
         match self {
             Storage::Cpu(storage) => Ok(Storage::Cpu(storage.sigmoid()?)),
+            #[cfg(feature = "metal")]
             Storage::Metal(storage) => Ok(Storage::Metal(storage.sigmoid()?)),
         }
     }
@@ -113,6 +127,7 @@ impl Storage {
     pub fn softmax(&self, batch_size: usize, vector_size: usize) -> Result<Self, TensorError> {
         match self {
             Storage::Cpu(storage) => Ok(Storage::Cpu(storage.softmax(batch_size, vector_size)?)),
+            #[cfg(feature = "metal")]
             Storage::Metal(storage) => {
                 Ok(Storage::Metal(storage.softmax(batch_size, vector_size)?))
             }
@@ -123,6 +138,7 @@ impl Storage {
         self.same_device(rhs)?;
         match (self, rhs) {
             (Storage::Cpu(lhs), Storage::Cpu(rhs)) => Ok(Storage::Cpu(lhs.sub(rhs)?)),
+            #[cfg(feature = "metal")]
             (Storage::Metal(lhs), Storage::Metal(rhs)) => Ok(Storage::Metal(lhs.sub(rhs)?)),
             _ => Err(TensorError::DeviceMismatch {
                 first: self.device(),
@@ -134,6 +150,7 @@ impl Storage {
     pub fn mul_scalar(&self, scalar: f32) -> Result<Self, TensorError> {
         match self {
             Storage::Cpu(storage) => Ok(Storage::Cpu(storage.mul_scalar(scalar)?)),
+            #[cfg(feature = "metal")]
             Storage::Metal(storage) => Ok(Storage::Metal(storage.mul_scalar(scalar)?)),
         }
     }
@@ -146,6 +163,7 @@ impl Storage {
     ) -> Result<Self, TensorError> {
         match self {
             Storage::Cpu(storage) => Ok(Storage::Cpu(storage.sum_axis(axis, input_shape, output_shape)?)),
+            #[cfg(feature = "metal")]
             Storage::Metal(storage) => Ok(Storage::Metal(storage.sum_axis(axis, input_shape, output_shape)?)),
         }
     }
@@ -157,6 +175,7 @@ impl Storage {
     ) -> Result<Self, TensorError> {
         match self {
             Storage::Cpu(storage) => Ok(Storage::Cpu(storage.copy_strided(shape, strides)?)),
+            #[cfg(feature = "metal")]
             Storage::Metal(storage) => Ok(Storage::Metal(storage.copy_strided(shape, strides)?)),
         }
     }

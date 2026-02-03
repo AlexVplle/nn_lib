@@ -4,6 +4,7 @@ pub mod error;
 pub mod initialization;
 pub mod layers;
 pub mod metrics;
+pub mod model_io;
 pub mod optimizer;
 pub mod sequential;
 pub mod tensor;

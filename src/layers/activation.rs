@@ -20,6 +20,10 @@ impl ActivationLayer {
             input: None,
         }
     }
+
+    pub fn activation(&self) -> Activation {
+        self.activation
+    }
 }
 
 impl Layer for ActivationLayer {

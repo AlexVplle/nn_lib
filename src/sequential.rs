@@ -86,8 +86,8 @@ impl SequentialBuilder {
 }
 
 pub struct Sequential {
-    layers: Vec<Box<dyn Layer>>,
-    cost_function: CostFunction,
+    pub(crate) layers: Vec<Box<dyn Layer>>,
+    pub(crate) cost_function: CostFunction,
     optimizer: Box<dyn Optimizer>,
     metrics: Option<Metrics>,
 }

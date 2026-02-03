@@ -23,4 +23,7 @@ pub enum NeuralNetworkError {
 
     #[error("Tensor error: {0}")]
     TensorError(#[from] crate::tensor::TensorError),
+
+    #[error("{0}")]
+    Other(String),
 }

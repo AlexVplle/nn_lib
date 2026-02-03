@@ -34,6 +34,7 @@ pub enum TensorError {
     #[error("Lock error")]
     LockError,
 
+    #[cfg(feature = "metal")]
     #[error("Metal backend error: {0}")]
     MetalError(#[from] crate::tensor::backend::metal::error::MetalError),
 }

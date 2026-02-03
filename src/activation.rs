@@ -1,5 +1,6 @@
 use log::error;
 use ndarray::ArrayD;
+use serde::{Deserialize, Serialize};
 
 use crate::error::NeuralNetworkError;
 use crate::tensor::Tensor;
@@ -10,7 +11,7 @@ fn check_nan(array: &ArrayD<f64>, operation: &str) {
     }
 }
 
-#[derive(Eq, PartialEq, Debug, Clone, Default, Copy, PartialOrd, Ord, Hash)]
+#[derive(Eq, PartialEq, Debug, Clone, Default, Copy, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Activation {
     #[default]
     ReLU,

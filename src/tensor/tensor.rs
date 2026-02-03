@@ -42,6 +42,7 @@ impl Tensor {
 
         let storage: Box<Storage> = match device {
             Device::CPU => Box::new(Storage::Cpu(CpuStorage(data))),
+            #[cfg(feature = "metal")]
             Device::Metal(device) => {
                 let storage = device.storage_from_vec(data)?;
                 Box::new(Storage::Metal(storage))
