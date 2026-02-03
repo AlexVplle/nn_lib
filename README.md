@@ -4,7 +4,7 @@ Neural network library written in Rust with support for both CPU and Metal GPU b
 
 ## Features
 
-- **Multiple Backends**: CPU (via ndarray) and Metal GPU acceleration for Apple Silicon
+- **Multiple Backends**: CPU and Metal GPU acceleration for Apple Silicon
 - **Layer Types**:
   - Dense (fully connected) - ✅ Tensor-based
   - Activation layers - ✅ Tensor-based
