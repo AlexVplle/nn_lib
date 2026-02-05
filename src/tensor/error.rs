@@ -34,6 +34,10 @@ pub enum TensorError {
     #[error("Lock error")]
     LockError,
 
+    #[error("Unsupported backend: {0}")]
+    UnsupportedBackend(&'static str),
+
+    #[cfg(feature = "metal")]
     #[error("Metal backend error: {0}")]
     MetalError(#[from] crate::tensor::backend::metal::error::MetalError),
 }

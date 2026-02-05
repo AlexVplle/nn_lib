@@ -19,9 +19,9 @@ rand = "0.8.5"
 cubecl = "0.8.1"
 cubecl-wgpu = "0.8.1"
 cubecl-reduce = "0.8.1"
-objc2-metal = "0.3.2"
-objc2 = "0.6.3"
-objc2-foundation = "0.3.2"
+objc2-metal = { version = "0.3.2", optional = true }
+objc2 = { version = "0.6.3", optional = true }
+objc2-foundation = { version = "0.3.2", optional = true }
 
 [dev-dependencies]
 anyhow = "1.0"
@@ -29,4 +29,4 @@ flate2 = "1.0"
 byteorder = "1.5"
 
 [features]
-metal = []
+metal = ["objc2", "objc2-metal", "objc2-foundation"]

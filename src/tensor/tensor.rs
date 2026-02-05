@@ -4,11 +4,13 @@ use std::{
 };
 
 use crate::tensor::{
-    backend::{backend_device::BackendDevice, cpu::CpuStorage},
+    backend::cpu::CpuStorage,
     device::Device,
     storage::Storage,
     Layout, TensorError,
 };
+#[cfg(feature = "metal")]
+use crate::tensor::backend::backend_device::BackendDevice;
 use ndarray::ArrayD;
 
 #[derive(Debug)]
@@ -42,6 +44,7 @@ impl Tensor {
 
         let storage: Box<Storage> = match device {
             Device::CPU => Box::new(Storage::Cpu(CpuStorage(data))),
+            #[cfg(feature = "metal")]
             Device::Metal(device) => {
                 let storage = device.storage_from_vec(data)?;
                 Box::new(Storage::Metal(storage))
@@ -419,6 +422,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "metal")]
     fn test_tensor_new_metal() {
         let device = Device::new_metal(0);
         if device.is_err() {
@@ -462,6 +466,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "metal")]
     fn test_tensor_new_3d_metal() {
         let device = Device::new_metal(0);
         if device.is_err() {
@@ -493,6 +498,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "metal")]
     fn test_tensor_new_incompatible_shape_metal() {
         let device = Device::new_metal(0);
         if device.is_err() {
@@ -524,6 +530,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "metal")]
     fn test_tensor_transpose_metal() {
         let device = Device::new_metal(0);
         if device.is_err() {
@@ -568,6 +575,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "metal")]
     fn test_tensor_permute_3d_metal() {
         let device = Device::new_metal(0);
         if device.is_err() {
@@ -614,6 +622,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "metal")]
     fn test_tensor_slice_first_dimension_metal() {
         let device = Device::new_metal(0);
         if device.is_err() {
@@ -685,6 +694,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "metal")]
     fn test_tensor_storage_sharing_metal() {
         let device = Device::new_metal(0);
         if device.is_err() {
@@ -714,6 +724,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "metal")]
     fn test_tensor_complex_operations_metal() {
         let device = Device::new_metal(0);
         if device.is_err() {
@@ -749,6 +760,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "metal")]
     fn test_tensor_multiple_slices_metal() {
         let device = Device::new_metal(0);
         if device.is_err() {
@@ -805,6 +817,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "metal")]
     fn test_tensor_device_preserved_metal() {
         let device = Device::new_metal(0);
         if device.is_err() {
@@ -838,6 +851,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "metal")]
     fn test_tensor_large_tensor_metal() {
         let device = Device::new_metal(0);
         if device.is_err() {
