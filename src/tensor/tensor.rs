@@ -112,33 +112,14 @@ impl Tensor {
     }
 
     pub fn slice(&self, dimension: usize, range: Range<usize>) -> Result<Self, TensorError> {
-        let old_shape = self.shape();
-
-        if old_shape.len() == 2 && dimension == 0 {
-            let row_size = old_shape[1];
-            let num_rows = range.end - range.start;
-            let new_shape = vec![num_rows, row_size];
-
-            let total_size = num_rows
-                .checked_mul(row_size)
-                .ok_or(TensorError::DimensionMismatch)?;
-
-            let old_data = self.to_vec()?;
-
-            let mut new_data = Vec::with_capacity(total_size);
-            for i in range.start..range.end {
-                let start_idx = i * row_size;
-                let end_idx = start_idx + row_size;
-                new_data.extend_from_slice(&old_data[start_idx..end_idx]);
-            }
-
-            Self::new(new_data, new_shape, self.device.clone())
-        } else {
-            Err(TensorError::InvalidDimension {
-                got: dimension,
-                max_dimension: 0,
-            })
-        }
+        let new_layout = self.layout.slice(dimension, range)?;
+        Ok(Self(Arc::new(Tensor_ {
+            storage: Arc::clone(&self.storage),
+            layout: new_layout,
+            device: self.device.clone(),
+            gradient: None,
+            require_gradient: self.require_gradient,
+        })))
     }
 
     pub fn storage(&self) -> RwLockReadGuard<'_, Box<Storage>> {
