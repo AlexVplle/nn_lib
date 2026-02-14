@@ -21,6 +21,9 @@ pub enum NeuralNetworkError {
     #[error("Dimension mismatch in training data")]
     DimensionMismatch,
 
+    #[error("{0}")]
+    Message(String),
+
     #[error("Tensor error: {0}")]
     TensorError(#[from] crate::tensor::TensorError),
 }

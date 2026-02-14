@@ -1,11 +1,13 @@
 use crate::tensor::backend::backend_storage::BackendStorage;
 use crate::tensor::backend::cpu::CpuStorage;
+#[cfg(target_os = "macos")]
 use crate::tensor::backend::metal::storage::MetalStorage;
 use crate::tensor::{Device, TensorError};
 
 #[derive(Debug)]
 pub enum Storage {
     Cpu(CpuStorage),
+    #[cfg(target_os = "macos")]
     Metal(MetalStorage),
 }
 
@@ -13,6 +15,7 @@ impl Storage {
     pub fn try_clone(&self) -> Result<Self, TensorError> {
         match self {
             Self::Cpu(storage) => Ok(Self::Cpu(storage.clone())),
+            #[cfg(target_os = "macos")]
             Self::Metal(storage) => Ok(Self::Metal(storage.clone())),
         }
     }
@@ -20,6 +23,7 @@ impl Storage {
     pub fn device(&self) -> Device {
         match self {
             Self::Cpu(_) => Device::CPU,
+            #[cfg(target_os = "macos")]
             Self::Metal(storage) => Device::Metal(storage.device().clone()),
         }
     }
@@ -27,6 +31,7 @@ impl Storage {
     pub fn to_cpu_storage(&self) -> Result<CpuStorage, TensorError> {
         match self {
             Self::Cpu(storage) => storage.to_cpu_storage(),
+            #[cfg(target_os = "macos")]
             Self::Metal(storage) => storage.to_cpu_storage(),
         }
     }
@@ -45,8 +50,10 @@ impl Storage {
 
     pub fn add(&self, rhs: &Self) -> Result<Self, TensorError> {
         self.same_device(rhs)?;
+        #[allow(unreachable_patterns)]
         match (self, rhs) {
             (Storage::Cpu(lhs), Storage::Cpu(rhs)) => Ok(Storage::Cpu(lhs.add(rhs)?)),
+            #[cfg(target_os = "macos")]
             (Storage::Metal(lhs), Storage::Metal(rhs)) => Ok(Storage::Metal(lhs.add(rhs)?)),
             _ => Err(TensorError::DeviceMismatch {
                 first: self.device(),
@@ -65,8 +72,10 @@ impl Storage {
         rhs_strides: &[usize],
     ) -> Result<Self, TensorError> {
         self.same_device(rhs)?;
+        #[allow(unreachable_patterns)]
         match (self, rhs) {
             (Storage::Cpu(lhs), Storage::Cpu(rhs)) => Ok(Storage::Cpu(lhs.matmul(rhs, m, k, n, lhs_strides, rhs_strides)?)),
+            #[cfg(target_os = "macos")]
             (Storage::Metal(lhs), Storage::Metal(rhs)) => {
                 Ok(Storage::Metal(lhs.matmul(rhs, m, k, n, lhs_strides, rhs_strides)?))
             }
@@ -79,8 +88,10 @@ impl Storage {
 
     pub fn mul(&self, rhs: &Self) -> Result<Self, TensorError> {
         self.same_device(rhs)?;
+        #[allow(unreachable_patterns)]
         match (self, rhs) {
             (Storage::Cpu(lhs), Storage::Cpu(rhs)) => Ok(Storage::Cpu(lhs.mul(rhs)?)),
+            #[cfg(target_os = "macos")]
             (Storage::Metal(lhs), Storage::Metal(rhs)) => Ok(Storage::Metal(lhs.mul(rhs)?)),
             _ => Err(TensorError::DeviceMismatch {
                 first: self.device(),
@@ -92,6 +103,7 @@ impl Storage {
     pub fn relu(&self) -> Result<Self, TensorError> {
         match self {
             Storage::Cpu(storage) => Ok(Storage::Cpu(storage.relu()?)),
+            #[cfg(target_os = "macos")]
             Storage::Metal(storage) => Ok(Storage::Metal(storage.relu()?)),
         }
     }
@@ -99,6 +111,7 @@ impl Storage {
     pub fn tanh(&self) -> Result<Self, TensorError> {
         match self {
             Storage::Cpu(storage) => Ok(Storage::Cpu(storage.tanh()?)),
+            #[cfg(target_os = "macos")]
             Storage::Metal(storage) => Ok(Storage::Metal(storage.tanh()?)),
         }
     }
@@ -106,6 +119,7 @@ impl Storage {
     pub fn sigmoid(&self) -> Result<Self, TensorError> {
         match self {
             Storage::Cpu(storage) => Ok(Storage::Cpu(storage.sigmoid()?)),
+            #[cfg(target_os = "macos")]
             Storage::Metal(storage) => Ok(Storage::Metal(storage.sigmoid()?)),
         }
     }
@@ -113,6 +127,7 @@ impl Storage {
     pub fn softmax(&self, batch_size: usize, vector_size: usize) -> Result<Self, TensorError> {
         match self {
             Storage::Cpu(storage) => Ok(Storage::Cpu(storage.softmax(batch_size, vector_size)?)),
+            #[cfg(target_os = "macos")]
             Storage::Metal(storage) => {
                 Ok(Storage::Metal(storage.softmax(batch_size, vector_size)?))
             }
@@ -121,8 +136,10 @@ impl Storage {
 
     pub fn sub(&self, rhs: &Self) -> Result<Self, TensorError> {
         self.same_device(rhs)?;
+        #[allow(unreachable_patterns)]
         match (self, rhs) {
             (Storage::Cpu(lhs), Storage::Cpu(rhs)) => Ok(Storage::Cpu(lhs.sub(rhs)?)),
+            #[cfg(target_os = "macos")]
             (Storage::Metal(lhs), Storage::Metal(rhs)) => Ok(Storage::Metal(lhs.sub(rhs)?)),
             _ => Err(TensorError::DeviceMismatch {
                 first: self.device(),
@@ -134,6 +151,7 @@ impl Storage {
     pub fn mul_scalar(&self, scalar: f32) -> Result<Self, TensorError> {
         match self {
             Storage::Cpu(storage) => Ok(Storage::Cpu(storage.mul_scalar(scalar)?)),
+            #[cfg(target_os = "macos")]
             Storage::Metal(storage) => Ok(Storage::Metal(storage.mul_scalar(scalar)?)),
         }
     }
@@ -146,6 +164,7 @@ impl Storage {
     ) -> Result<Self, TensorError> {
         match self {
             Storage::Cpu(storage) => Ok(Storage::Cpu(storage.sum_axis(axis, input_shape, output_shape)?)),
+            #[cfg(target_os = "macos")]
             Storage::Metal(storage) => Ok(Storage::Metal(storage.sum_axis(axis, input_shape, output_shape)?)),
         }
     }
@@ -157,6 +176,7 @@ impl Storage {
     ) -> Result<Self, TensorError> {
         match self {
             Storage::Cpu(storage) => Ok(Storage::Cpu(storage.copy_strided(shape, strides)?)),
+            #[cfg(target_os = "macos")]
             Storage::Metal(storage) => Ok(Storage::Metal(storage.copy_strided(shape, strides)?)),
         }
     }
