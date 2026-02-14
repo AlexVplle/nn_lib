@@ -8,6 +8,7 @@ kernel void copy_strided(
     constant uint* strides [[buffer(3)]],
     constant uint& ndim [[buffer(4)]],
     constant uint& total_size [[buffer(5)]],
+    constant uint& base_offset [[buffer(6)]],
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= total_size) return;
@@ -20,7 +21,7 @@ kernel void copy_strided(
         remaining /= shape[d];
     }
 
-    uint input_offset = 0;
+    uint input_offset = base_offset;
     for (uint d = 0; d < ndim; d++) {
         input_offset += indices[d] * strides[d];
     }

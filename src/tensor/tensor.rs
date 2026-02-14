@@ -65,14 +65,11 @@ impl Tensor {
     }
 
     pub fn contiguous(&self) -> Result<Self, TensorError> {
-        if self.is_contiguous() {
-            return Ok(self.clone());
-        }
-
         let shape = self.shape().to_vec();
         let strides = self.layout.strides();
+        let offset = self.layout.offset();
         let storage = self.storage();
-        let new_storage = storage.copy_strided(&shape, strides)?;
+        let new_storage = storage.copy_strided(&shape, strides, offset)?;
 
         Ok(Self(Arc::new(Tensor_ {
             storage: Arc::new(RwLock::new(Box::new(new_storage))),
@@ -143,9 +140,18 @@ impl Tensor {
     }
 
     pub fn to_vec(&self) -> Result<Vec<f32>, TensorError> {
-        if self.is_contiguous() {
-            let storage = self.storage();
+        if !self.is_contiguous() || self.layout.offset() != 0 {
+            let contiguous = self.contiguous()?;
+            let storage = contiguous.storage();
             let cpu_storage = storage.to_cpu_storage()?;
+            return Ok(cpu_storage.0);
+        }
+
+        let storage = self.storage();
+        let cpu_storage = storage.to_cpu_storage()?;
+        let expected_size = self.layout.num_elements();
+
+        if cpu_storage.0.len() == expected_size {
             Ok(cpu_storage.0)
         } else {
             let contiguous = self.contiguous()?;

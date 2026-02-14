@@ -202,6 +202,7 @@ impl BackendStorage for CpuStorage {
         &self,
         shape: &[usize],
         strides: &[usize],
+        base_offset: usize,
     ) -> Result<Self, TensorError> {
         let total_size: usize = shape.iter().product();
         let mut result: Vec<f32> = Vec::with_capacity(total_size);
@@ -210,12 +211,13 @@ impl BackendStorage for CpuStorage {
             data: &[f32],
             shape: &[usize],
             strides: &[usize],
+            base_offset: usize,
             indices: &mut Vec<usize>,
             dim: usize,
             out: &mut Vec<f32>,
         ) {
             if dim == shape.len() {
-                let mut offset: usize = 0;
+                let mut offset: usize = base_offset;
                 for (i, &stride) in strides.iter().enumerate() {
                     offset += indices[i] * stride;
                 }
@@ -225,12 +227,12 @@ impl BackendStorage for CpuStorage {
 
             for i in 0..shape[dim] {
                 indices[dim] = i;
-                copy_recursive(data, shape, strides, indices, dim + 1, out);
+                copy_recursive(data, shape, strides, base_offset, indices, dim + 1, out);
             }
         }
 
         let mut indices: Vec<usize> = vec![0; shape.len()];
-        copy_recursive(&self.0, shape, strides, &mut indices, 0, &mut result);
+        copy_recursive(&self.0, shape, strides, base_offset, &mut indices, 0, &mut result);
 
         Ok(CpuStorage(result))
     }

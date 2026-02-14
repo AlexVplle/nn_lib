@@ -569,6 +569,7 @@ impl BackendStorage for MetalStorage {
         &self,
         shape: &[usize],
         strides: &[usize],
+        base_offset: usize,
     ) -> Result<Self, TensorError> {
         let total_size: usize = shape.iter().product();
         let ndim: u32 = shape.len() as u32;
@@ -598,6 +599,7 @@ impl BackendStorage for MetalStorage {
             encoder.set_buffer(3, Some(&strides_buffer), 0);
             encoder.set_bytes(4, &ndim);
             encoder.set_bytes(5, &(total_size as u32));
+            encoder.set_bytes(6, &(base_offset as u32));
 
             let grid_size = MTLSize {
                 width: total_size,

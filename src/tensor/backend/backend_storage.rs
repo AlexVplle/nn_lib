@@ -36,5 +36,6 @@ pub trait BackendStorage: Sized {
         &self,
         shape: &[usize],
         strides: &[usize],
+        offset: usize,
     ) -> Result<Self, TensorError>;
 }

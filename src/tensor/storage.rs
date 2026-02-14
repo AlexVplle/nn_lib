@@ -173,11 +173,12 @@ impl Storage {
         &self,
         shape: &[usize],
         strides: &[usize],
+        offset: usize,
     ) -> Result<Self, TensorError> {
         match self {
-            Storage::Cpu(storage) => Ok(Storage::Cpu(storage.copy_strided(shape, strides)?)),
+            Storage::Cpu(storage) => Ok(Storage::Cpu(storage.copy_strided(shape, strides, offset)?)),
             #[cfg(target_os = "macos")]
-            Storage::Metal(storage) => Ok(Storage::Metal(storage.copy_strided(shape, strides)?)),
+            Storage::Metal(storage) => Ok(Storage::Metal(storage.copy_strided(shape, strides, offset)?)),
         }
     }
 }
